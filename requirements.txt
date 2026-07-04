@@ -3,3 +3,4 @@ SQLAlchemy[asyncio]==2.0.35
 asyncpg==0.29.0
 python-dotenv==1.0.1
 PyYAML==6.0.2
+requests==2.32.3
