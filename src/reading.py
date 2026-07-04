@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 
 from aiogram import F, Router
@@ -43,6 +44,52 @@ class Reading(StatesGroup):
 
 FALLBACK_SPREAD_ID = "proshloe_nastoyashee_budushee"
 TELEGRAM_LIMIT = 4096  # максимум символов в одном сообщении
+
+# Пол хранится кодом ("male"/"female"/"other"); в промпт нужен русский род.
+_GENDER_RU = {
+    "male": "мужской", "мужской": "мужской", "м": "мужской",
+    "female": "женский", "женский": "женский", "ж": "женский",
+}
+
+
+def _gender_ru(code: str | None) -> str:
+    return _GENDER_RU.get((code or "").strip().lower(), "не указан")
+
+
+# Статичные варианты реплик (ротация random.choice, без затрат на токены).
+ASK_PROMPTS = [
+    "О чём молчит твоё сердце? Назови – и я услышу, что скажут карты.",
+    "Говори, что тревожит. Карты уже слушают.",
+    "Задай свой вопрос – и я загляну в дым, что вьётся над огнём.",
+    "О чём хочешь узнать? Назови – и тени начнут складываться в узор.",
+    "Спрашивай. Что бы ни лежало на душе – карты ответят.",
+    "Назови то, что не даёт покоя. Я вгляжусь в нити твоей судьбы.",
+    "Открой мне свой вопрос – и пусть карты укажут дорогу.",
+    "О чём думаешь в этот час? Скажи – и я разложу карты на твою тревогу.",
+    "Что привело тебя к огню? Назови вопрос, и он ответит образами.",
+    "Доверь мне свой вопрос. Карты не лгут тому, кто спрашивает честно.",
+]
+
+NOTICE_MESSAGES = [
+    "Тасую тени, слушаю огонь… 🔥",
+    "Карты ложатся одна за другой… 🌙",
+    "Вглядываюсь в дым над костром… 🔥",
+    "Нити твоей судьбы сплетаются… ✨",
+    "Слушаю, что шепчет пламя… 🔥",
+    "Раскладываю карты на песке… 🌙",
+    "Тени говорят – я внимаю… ✨",
+    "Пламя качнулось, узор проявляется… 🔥",
+    "Вопрошаю карты о тебе… 🌙",
+    "Дым вьётся, складывая ответ… ✨",
+]
+
+ERROR_MESSAGES = [
+    "Дым сегодня густой, я не вижу ясно – вернись ко мне позже 🌙",
+    "Пламя качнулось и погасло – спроси меня снова чуть погодя 🌙",
+    "Тени сомкнулись, ответ ускользнул. Приходи чуть позже 🌙",
+    "Карты молчат в этот час – попробуй ещё раз немного погодя 🌙",
+    "Ветер спутал нити – дай мне срок и спроси заново 🌙",
+]
 
 # Расклады читаем один раз (позиции фиксированы, файл при работе не меняется).
 _spreads_cache: dict | None = None
@@ -112,9 +159,7 @@ async def start_reading(message: Message, state: FSMContext) -> None:
         )
         return
     await state.set_state(Reading.waiting_question)
-    await message.answer(
-        "О чём молчит твоё сердце? Назови – и я услышу, что скажут карты."
-    )
+    await message.answer(random.choice(ASK_PROMPTS))
 
 
 @router.message(Reading.waiting_question, F.text, ~F.text.startswith("/"),
@@ -141,7 +186,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-    notice = await message.answer("Тасую тени, слушаю огонь… 🔥")
+    notice = await message.answer(random.choice(NOTICE_MESSAGES))
 
     try:
         spreads = _spreads()
@@ -156,7 +201,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
 
         context = {
             "name": user.name,
-            "gender": user.gender or "",
+            "gender": _gender_ru(user.gender),
             "question": question,
             "spread_id": spread_id,
             "spread": spread,
@@ -167,9 +212,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
         await db.set_reading_text(reading_id, text)
     except Exception:
         logger.exception("Не удалось построить расклад")
-        await notice.edit_text(
-            "Дым сегодня густой, я не вижу ясно – вернись ко мне позже 🌙"
-        )
+        await notice.edit_text(random.choice(ERROR_MESSAGES))
         return
 
     await notice.delete()
