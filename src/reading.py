@@ -91,6 +91,17 @@ def _fragments(text: str) -> list[str]:
     return messages or [text.strip()]
 
 
+def _card_list(drawn: list[tuple[str, str]]) -> str:
+    """Список выпавших карт: названия жирным, перевёрнутые — с подписью."""
+    lines = []
+    for card, orient in drawn:
+        if orient == deck.REVERSED:
+            lines.append(f"<b>{card}</b> – перевёрнутая")
+        else:
+            lines.append(f"<b>{card}</b>")
+    return "\n".join(lines)
+
+
 @router.message(F.text.in_(READING_BUTTONS))
 async def start_reading(message: Message, state: FSMContext) -> None:
     """Тап по кнопке «Сделать расклад» / «ещё один» — просим назвать вопрос."""
@@ -101,7 +112,9 @@ async def start_reading(message: Message, state: FSMContext) -> None:
         )
         return
     await state.set_state(Reading.waiting_question)
-    await message.answer("О чём молчит твоё сердце? Назови – и я раскину карты.")
+    await message.answer(
+        "О чём молчит твоё сердце? Назови – и я услышу, что скажут карты."
+    )
 
 
 @router.message(Reading.waiting_question, F.text, ~F.text.startswith("/"),
@@ -160,6 +173,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
 
     await notice.delete()
     await card_images.send_album(message, drawn)
+    await message.answer(_card_list(drawn))  # названия карт жирным, перевёрнутые с подписью
     messages = _fragments(text)
     for i, part in enumerate(messages):
         # на последнем сообщении — кнопка «сделать ещё один расклад».
