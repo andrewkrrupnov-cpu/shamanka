@@ -24,6 +24,7 @@ from . import cards as card_images
 from . import db, deck
 from .classifier import classify
 from .config import load_spreads
+from .keyboards import MAIN_KEYBOARD, MAKE_READING
 from .llm import interpret
 
 logger = logging.getLogger("shamanka.reading")
@@ -67,7 +68,22 @@ def _split_message(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
     return chunks
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text == MAKE_READING)
+async def prompt_question(message: Message) -> None:
+    """Тап по кнопке «Сделать расклад» — просим назвать вопрос."""
+    user = await db.get_user(message.from_user.id)
+    if user is None or not user.onboarded:
+        await message.answer(
+            "Сначала назовись – набери /start, и я взгляну на твою нить 🌙"
+        )
+        return
+    await message.answer(
+        "Назови свой вопрос – о любви, деле, дороге или судьбе. Я разложу карты.",
+        reply_markup=MAIN_KEYBOARD,
+    )
+
+
+@router.message(F.text & ~F.text.startswith("/") & (F.text != MAKE_READING))
 async def handle_question(message: Message) -> None:
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
@@ -113,5 +129,9 @@ async def handle_question(message: Message) -> None:
 
     await notice.delete()
     await card_images.send_album(message, drawn)
-    for chunk in _split_message(text):
-        await message.answer(chunk)
+    chunks = _split_message(text)
+    for i, chunk in enumerate(chunks):
+        # клавиатуру возвращаем на последнем сообщении, чтобы кнопка осталась внизу
+        await message.answer(
+            chunk, reply_markup=MAIN_KEYBOARD if i == len(chunks) - 1 else None
+        )
