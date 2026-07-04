@@ -41,7 +41,7 @@ except ImportError:
     sys.exit("Нужен пакет requests: pip install -r requirements.txt")
 
 # Прод-код трактовки — никаких дубликатов колоды/тяги/вызова модели здесь.
-from src.deck import FULL_DECK, draw
+from src.deck import FULL_DECK, card_variants, draw
 from src.llm import TELEGRAM_LIMIT, build_layout, call_openrouter, interpret
 from src.config import load_spreads
 
@@ -95,6 +95,8 @@ def check_reading(text: str, spread_id: str, spread: dict, cards) -> dict:
     faces = FACE_EMOJI.findall(text)
     longest = max((len(p) for p in fragments), default=len(text))
     fits = longest <= TELEGRAM_LIMIT
+    # Каждая выпавшая карта должна быть разобрана (учитываем словесные формы рангов).
+    uncovered = [c for c, _ in cards if not any(v in low for v in card_variants(c))]
     return {
         "слов": len(re.findall(r"\w+", text)),
         "фрагментов": n_frag,
@@ -104,10 +106,11 @@ def check_reading(text: str, spread_id: str, spread: dict, cards) -> dict:
         "приветствие": greeted,
         "лица_эмодзи": faces,
         "тяжёлые_карты": heavy_drawn,
-        # Голос Шаманки: дроблёный ответ (≥2 фрагмента), без приветствий, без
-        # смайлов-лиц, без буквальной смерти/болезни, каждый фрагмент влезает.
+        "карты_без_вывода": uncovered,
+        # Голос Шаманки: дроблёный ответ (≥2 фрагмента), разобрана каждая карта, без
+        # приветствий, без смайлов-лиц, без буквальной смерти/болезни, всё в лимите.
         "ок": (not forbidden_hits) and (not greeted) and (not faces)
-              and (n_frag >= 2) and fits,
+              and (n_frag >= 2) and fits and (not uncovered),
     }
 
 
@@ -178,9 +181,9 @@ def main():
         chk = check_reading(text, ex["spread_id"], spread, cards)
         all_ok = all_ok and chk["ок"]
         flag = "OK" if chk["ок"] else "ВНИМАНИЕ"
-        print(f"  [{flag}] фрагментов={chk['фрагментов']} запрещённые={chk['запрещённые']} "
-              f"приветствие={chk['приветствие']} лица={chk['лица_эмодзи'] or 'нет'} "
-              f"тяжёлые={chk['тяжёлые_карты']} макс_фрагм={chk['макс_фрагмент']}/лимит={chk['в_лимит']}")
+        print(f"  [{flag}] фрагментов={chk['фрагментов']} без_вывода={chk['карты_без_вывода'] or 'нет'} "
+              f"запрещённые={chk['запрещённые']} приветствие={chk['приветствие']} "
+              f"лица={chk['лица_эмодзи'] or 'нет'} макс_фрагм={chk['макс_фрагмент']}/лимит={chk['в_лимит']}")
         interps.append((ex, spread, cards, text, layout))
 
     judge_text = None
@@ -212,10 +215,10 @@ def main():
             "```",
             "",
             f"_Проверка: {'OK' if chk['ок'] else 'ВНИМАНИЕ'} · фрагментов "
-            f"{chk['фрагментов']} · запрещённые {chk['запрещённые'] or 'нет'} · "
-            f"приветствие {'есть!' if chk['приветствие'] else 'нет'} · лица-эмодзи "
-            f"{chk['лица_эмодзи'] or 'нет'} · тяжёлые карты "
-            f"{chk['тяжёлые_карты'] or 'нет'} · макс. фрагмент "
+            f"{chk['фрагментов']} · карты без вывода {chk['карты_без_вывода'] or 'нет'} · "
+            f"запрещённые {chk['запрещённые'] or 'нет'} · приветствие "
+            f"{'есть!' if chk['приветствие'] else 'нет'} · лица-эмодзи "
+            f"{chk['лица_эмодзи'] or 'нет'} · макс. фрагмент "
             f"{chk['макс_фрагмент']} симв ({'ок' if chk['в_лимит'] else 'ПРЕВЫШЕНИЕ'})_",
             "",
             text, "", "---", "",
