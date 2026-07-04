@@ -71,7 +71,9 @@ def _split_message(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
 async def handle_question(message: Message) -> None:
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
-        await message.answer("Сначала давай познакомимся — набери /start 🌙")
+        await message.answer(
+            "Сначала назовись – набери /start, и я взгляну на твою нить 🌙"
+        )
         return
 
     question = message.text.strip()
@@ -79,7 +81,7 @@ async def handle_question(message: Message) -> None:
         return
 
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-    notice = await message.answer("Тяну карты… 🔮")
+    notice = await message.answer("Смотрю в нити грядущего… 🔮")
 
     try:
         spreads = _spreads()
@@ -105,7 +107,7 @@ async def handle_question(message: Message) -> None:
     except Exception:
         logger.exception("Не удалось построить расклад")
         await notice.edit_text(
-            "Карты сейчас молчат 🌙 Попробуй, пожалуйста, ещё раз чуть позже."
+            "Пески сегодня мутны – спроси меня снова чуть позже 🌙"
         )
         return
 

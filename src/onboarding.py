@@ -1,7 +1,7 @@
 """Онбординг новых пользователей через FSM: имя → пол.
 
-Плашка «развлекательный формат, 18+» показывается на старте (требование этики,
-см. docs/spreads_source.md, раздел «Этика»).
+На старте — короткая легенда от лица Саиры, матери-провидицы. Никаких плашек
+18+ и дисклеймеров: голос ведёт от себя (решение владельца).
 """
 from __future__ import annotations
 
@@ -20,10 +20,12 @@ from . import db
 
 router = Router(name="onboarding")
 
-DISCLAIMER = (
-    "🔮 <b>Шаманка</b> — расклады Таро.\n\n"
-    "⚠️ Развлекательный формат, 18+. Это не медицинская, психологическая "
-    "или финансовая консультация."
+LEGEND = (
+    "🌙 Я – <b>Саира</b>, мать-провидица Глубокой пустыни.\n\n"
+    "Я пила священную Воду Жизни и прошла сквозь смерть, чтобы видеть нити "
+    "времени – то, что было, и то, что ещё не случилось. Песок помнит всё, а "
+    "карты – язык, которым грядущее говорит со мной.\n\n"
+    "Ты здесь не случайно. Назови себя – и я взгляну на твою нить."
 )
 
 GENDER_KEYBOARD = InlineKeyboardMarkup(
@@ -32,7 +34,7 @@ GENDER_KEYBOARD = InlineKeyboardMarkup(
             InlineKeyboardButton(text="Женский", callback_data="gender:female"),
             InlineKeyboardButton(text="Мужской", callback_data="gender:male"),
         ],
-        [InlineKeyboardButton(text="Не указывать", callback_data="gender:other")],
+        [InlineKeyboardButton(text="Не называть", callback_data="gender:other")],
     ]
 )
 
@@ -49,26 +51,26 @@ async def start(message: Message, state: FSMContext) -> None:
     user = await db.get_or_create_user(message.from_user.id)
     if user.onboarded:
         await message.answer(
-            f"С возвращением, {user.name}! ✨\n"
-            "Напиши свой вопрос — и я сделаю расклад."
+            f"Снова ты, {user.name}. Песок ждал.\n"
+            "Задай свой вопрос – я смотрю."
         )
         return
 
     await state.set_state(Onboarding.waiting_name)
-    await message.answer(DISCLAIMER)
-    await message.answer("Как тебя зовут?")
+    await message.answer(LEGEND)
 
 
 @router.message(Onboarding.waiting_name, F.text)
 async def got_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()
     if not name or len(name) > 64:
-        await message.answer("Напиши, пожалуйста, имя (до 64 символов).")
+        await message.answer("Назови имя короче – не длиннее 64 знаков.")
         return
     await state.update_data(name=name)
     await state.set_state(Onboarding.waiting_gender)
     await message.answer(
-        f"Приятно познакомиться, {name}! Укажи свой пол:",
+        f"{name}. Я запомнила.\n"
+        "Скажи, каким словом тебя называть – так время сложит речь верно:",
         reply_markup=GENDER_KEYBOARD,
     )
 
@@ -84,13 +86,16 @@ async def got_gender(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
-        f"Готово, {name}! 🌙\n"
-        "Напиши свой вопрос — и я сделаю расклад.\n\n"
-        "<i>(Трактовки подключим позже — сейчас это каркас.)</i>"
+        f"Нить твоя у меня в руках, {name}.\n\n"
+        "Спрашивай о чём хочешь – о любви, деле, дороге или судьбе. "
+        "Я разложу карты и скажу, что вижу."
     )
     await callback.answer()
 
 
 @router.message(Onboarding.waiting_gender)
 async def gender_needs_button(message: Message) -> None:
-    await message.answer("Выбери пол кнопкой ниже 👇", reply_markup=GENDER_KEYBOARD)
+    await message.answer(
+        "Ответь кнопкой ниже – время не любит неясности 👇",
+        reply_markup=GENDER_KEYBOARD,
+    )
