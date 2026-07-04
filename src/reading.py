@@ -138,6 +138,13 @@ def _fragments(text: str) -> list[str]:
     return messages or [text.strip()]
 
 
+def _to_html(text: str) -> str:
+    """Экранируем спецсимволы и превращаем markdown-жирный **...** в <b>...</b>."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    return text.replace("**", "")  # непарные остатки убираем
+
+
 def _card_list(drawn: list[tuple[str, str]]) -> str:
     """Список выпавших карт: названия жирным, перевёрнутые — с подписью."""
     lines = []
@@ -208,7 +215,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
             "cards": drawn,
         }
         text = await asyncio.to_thread(interpret, context)
-        text = text.replace("**", "")  # модель иногда шлёт markdown-звёздочки, а у нас HTML
+        text = _to_html(text)  # заголовки **...** -> <b>...</b>, спецсимволы экранированы
         await db.set_reading_text(reading_id, text)
     except Exception:
         logger.exception("Не удалось построить расклад")
