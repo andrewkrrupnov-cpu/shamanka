@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
@@ -45,8 +46,12 @@ def _spreads() -> dict:
     return _spreads_cache
 
 
-def _split_message(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
-    """Разбить длинную трактовку на части по абзацам, не рвя слова грубо."""
+# Шаманка разделяет мысли строкой из дефисов (`---`). По ней и бьём на сообщения.
+_FRAGMENT_SEP = re.compile(r"(?m)^\s*[-–—]{3,}\s*$")
+
+
+def _split_long(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
+    """Страховка: если отдельный фрагмент вдруг длиннее лимита — режем по абзацам."""
     if len(text) <= limit:
         return [text]
     chunks: list[str] = []
@@ -58,7 +63,6 @@ def _split_message(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
             continue
         if current:
             chunks.append(current)
-        # сам абзац длиннее лимита — режем по строкам/жёстко
         while len(para) > limit:
             chunks.append(para[:limit])
             para = para[limit:]
@@ -68,17 +72,27 @@ def _split_message(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
     return chunks
 
 
+def _fragments(text: str) -> list[str]:
+    """Разбить ответ Шаманки на сообщения по разделителю `---` (одна мысль = одно)."""
+    parts = [p.strip() for p in _FRAGMENT_SEP.split(text)]
+    parts = [p for p in parts if p]
+    messages: list[str] = []
+    for part in parts:
+        messages.extend(_split_long(part))
+    return messages or [text.strip()]
+
+
 @router.message(F.text == MAKE_READING)
 async def prompt_question(message: Message) -> None:
     """Тап по кнопке «Сделать расклад» — просим назвать вопрос."""
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
         await message.answer(
-            "Сначала назовись – набери /start, и я взгляну на твою нить 🌙"
+            "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
         )
         return
     await message.answer(
-        "Назови свой вопрос – о любви, деле, дороге или судьбе. Я разложу карты.",
+        "О чём молчит твоё сердце? Назови – и я раскину карты.",
         reply_markup=MAIN_KEYBOARD,
     )
 
@@ -88,7 +102,7 @@ async def handle_question(message: Message) -> None:
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
         await message.answer(
-            "Сначала назовись – набери /start, и я взгляну на твою нить 🌙"
+            "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
         )
         return
 
@@ -97,7 +111,7 @@ async def handle_question(message: Message) -> None:
         return
 
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-    notice = await message.answer("Смотрю в нити грядущего… 🔮")
+    notice = await message.answer("Тасую тени, слушаю огонь… 🔥")
 
     try:
         spreads = _spreads()
@@ -123,15 +137,15 @@ async def handle_question(message: Message) -> None:
     except Exception:
         logger.exception("Не удалось построить расклад")
         await notice.edit_text(
-            "Пески сегодня мутны – спроси меня снова чуть позже 🌙"
+            "Дым сегодня густой, я не вижу ясно – вернись ко мне позже 🌙"
         )
         return
 
     await notice.delete()
     await card_images.send_album(message, drawn)
-    chunks = _split_message(text)
-    for i, chunk in enumerate(chunks):
+    messages = _fragments(text)
+    for i, part in enumerate(messages):
         # клавиатуру возвращаем на последнем сообщении, чтобы кнопка осталась внизу
         await message.answer(
-            chunk, reply_markup=MAIN_KEYBOARD if i == len(chunks) - 1 else None
+            part, reply_markup=MAIN_KEYBOARD if i == len(messages) - 1 else None
         )
