@@ -163,6 +163,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
             "cards": drawn,
         }
         text = await asyncio.to_thread(interpret, context)
+        text = text.replace("**", "")  # модель иногда шлёт markdown-звёздочки, а у нас HTML
         await db.set_reading_text(reading_id, text)
     except Exception:
         logger.exception("Не удалось построить расклад")
@@ -172,8 +173,10 @@ async def do_reading(message: Message, state: FSMContext) -> None:
         return
 
     await notice.delete()
-    await card_images.send_album(message, drawn)
-    await message.answer(_card_list(drawn))  # названия карт жирным, перевёрнутые с подписью
+    # Список карт идёт подписью к альбому (одно сообщение с картинками, без дубля).
+    card_list = _card_list(drawn)
+    if not await card_images.send_album(message, drawn, caption=card_list):
+        await message.answer(card_list)  # картинок нет — список отдельным сообщением
     messages = _fragments(text)
     for i, part in enumerate(messages):
         # на последнем сообщении — кнопка «сделать ещё один расклад».

@@ -41,22 +41,27 @@ def _chunk(items: list, size: int):
         yield items[i:i + size]
 
 
-async def send_album(message: Message, drawn: list[tuple[str, str]]) -> bool:
+async def send_album(
+    message: Message, drawn: list[tuple[str, str]], *, caption: str | None = None
+) -> bool:
     """Отправить вытянутые карты альбомом. True — если что-то отправили.
 
+    caption (HTML) — подпись под альбомом; ставится на первую картинку первой
+    группы, поэтому список карт идёт ОДНИМ сообщением с картинками, без дубля.
     Карты без картинок пропускаются. Альбом бьётся на группы по 10 (лимит TG).
     """
-    photos = [
-        (path, f"{card} ({orient})")
-        for card, orient in drawn
-        if (path := image_for(card)) is not None
-    ]
-    if not photos:
+    paths = [p for card, _ in drawn if (p := image_for(card)) is not None]
+    if not paths:
         return False
-    for batch in _chunk(photos, _MEDIA_GROUP_LIMIT):
-        media = [
-            InputMediaPhoto(media=FSInputFile(path), caption=caption)
-            for path, caption in batch
-        ]
+    first_batch = True
+    for batch in _chunk(paths, _MEDIA_GROUP_LIMIT):
+        media = []
+        for i, path in enumerate(batch):
+            if first_batch and i == 0 and caption:
+                media.append(InputMediaPhoto(
+                    media=FSInputFile(path), caption=caption, parse_mode="HTML"))
+            else:
+                media.append(InputMediaPhoto(media=FSInputFile(path)))
         await message.answer_media_group(media)
+        first_batch = False
     return True
