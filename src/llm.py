@@ -140,8 +140,9 @@ def call_openrouter(system: str, user: str, *, model: str | None = None,
 
 # Лимит одного сообщения Telegram — на него ориентируется разбивка в reading.py.
 TELEGRAM_LIMIT = 4096
-# Ответ Шаманки — 2–4 коротких фрагмента через `---`, так что генерация небольшая.
-INTERPRET_MAX_TOKENS = 1200
+# Ответ Шаманки дробится на 4–7 фрагментов-сообщений, поэтому объём можно давать
+# щедрее (примерно вдвое против прежнего) — больше конкретики по картам.
+INTERPRET_MAX_TOKENS = 2400
 
 
 def interpret(context: dict, *, model: str | None = None,
