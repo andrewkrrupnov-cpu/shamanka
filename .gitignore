@@ -1,0 +1,17 @@
+# Secrets — NEVER commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# Postgres volume (if ever bind-mounted locally)
+pgdata/
