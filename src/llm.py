@@ -153,6 +153,53 @@ def interpret(context: dict, *, model: str | None = None,
                            temperature=temperature, api_key=api_key)
 
 
-def classify(question: str) -> str:
-    """question -> spread_id. Не входит в это задание (Диалог 3)."""
-    raise NotImplementedError("classify() будет реализован в диалоге 3")
+# classify() (вопрос -> spread_id) намеренно живёт в src/classifier.py, а не здесь:
+# llm.py — только транспорт. classifier.py вызывает openrouter_chat() ниже.
+
+
+def openrouter_chat(
+    messages: list[dict],
+    *,
+    model: str,
+    temperature: float = 0.0,
+    max_tokens: int = 512,
+    response_format: dict | None = None,
+    timeout: int = 60,
+) -> str:
+    """Низкоуровневый транспорт: один вызов chat-completions в OpenRouter.
+
+    messages         — список {"role": ..., "content": ...} в формате OpenAI.
+    model            — слаг модели, напр. "google/gemini-2.5-flash-lite".
+    response_format  — напр. {"type": "json_object"} для структурированного вывода.
+                       Не все провайдеры его принимают — вызывающий код должен быть
+                       готов к обычному тексту (см. classifier._extract_id).
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY не задан. Положи ключ в .env "
+            "(строка OPENROUTER_API_KEY=sk-or-...) и загрузи через python-dotenv."
+        )
+
+    payload: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if os.getenv("OPENROUTER_REFERER"):
+        headers["HTTP-Referer"] = os.environ["OPENROUTER_REFERER"]
+    if os.getenv("OPENROUTER_TITLE"):
+        headers["X-Title"] = os.environ["OPENROUTER_TITLE"]
+
+    resp = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
