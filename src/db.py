@@ -1,13 +1,25 @@
 """Модели и запросы к БД (PostgreSQL, SQLAlchemy async).
 
-Таблица users: профиль пользователя + счётчик бесплатных раскладов.
-Пейволл на MVP не активен, но поле free_readings заложено в схему.
+Таблицы:
+  users    — профиль пользователя + счётчик бесплатных раскладов (пейволл пока
+             не активен, сервис бесплатный; поле заложено в схему на будущее).
+  readings — история раскладов. Результат тяги фиксируется ЗДЕСЬ ДО генерации
+             текста (требование CLAUDE.md), трактовка дописывается после.
 """
 from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, func, select
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -34,6 +46,24 @@ class User(Base):
         Integer, nullable=False, default=DEFAULT_FREE_READINGS
     )
     onboarded: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Reading(Base):
+    __tablename__ = "readings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)  # autoincrement
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id"), index=True, nullable=False
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    spread_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    spread_title: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Вытянутые карты: [["Солнце", "прямая"], ["10 Мечей", "перевёрнутая"], ...]
+    cards: Mapped[list] = mapped_column(JSON, nullable=False)
+    interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -90,3 +120,34 @@ async def save_profile(user_id: int, name: str, gender: str) -> User:
         await s.commit()
         await s.refresh(user)
         return user
+
+
+async def create_reading(
+    user_id: int,
+    question: str,
+    spread_id: str,
+    spread_title: str,
+    cards: list[tuple[str, str]],
+) -> int:
+    """Зафиксировать факт тяги ДО генерации текста. Возвращает id расклада."""
+    async with session() as s:
+        reading = Reading(
+            user_id=user_id,
+            question=question,
+            spread_id=spread_id,
+            spread_title=spread_title,
+            cards=[[card, orient] for card, orient in cards],
+        )
+        s.add(reading)
+        await s.commit()
+        await s.refresh(reading)
+        return reading.id
+
+
+async def set_reading_text(reading_id: int, interpretation: str) -> None:
+    """Дописать трактовку к уже сохранённому раскладу."""
+    async with session() as s:
+        reading = await s.get(Reading, reading_id)
+        if reading is not None:
+            reading.interpretation = interpretation
+            await s.commit()

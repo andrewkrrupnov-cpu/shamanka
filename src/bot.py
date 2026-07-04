@@ -12,6 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from . import db
 from .config import load_config
 from .onboarding import router as onboarding_router
+from .reading import router as reading_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,7 +33,10 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=MemoryStorage())
+    # Порядок важен: онбординг (FSM-состояния) раньше, чтобы во время знакомства
+    # сообщения не перехватывал общий обработчик вопросов.
     dp.include_router(onboarding_router)
+    dp.include_router(reading_router)
 
     logger.info("Бот запускается (long polling)…")
     await bot.delete_webhook(drop_pending_updates=True)
