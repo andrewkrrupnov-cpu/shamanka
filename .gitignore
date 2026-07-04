@@ -18,7 +18,3 @@ pgdata/
 
 # Тестовые отчёты тона (генерируются test_prompts.py)
 scripts/tone_report_*.md
-
-# Изображения колоды (кладутся локально/на сервере; README и генератор — в репо)
-assets/cards/*
-!assets/cards/README.md

@@ -97,7 +97,8 @@ def _render_user(user_tpl: str, context: dict, layout: str) -> str:
 
 def call_openrouter(system: str, user: str, *, model: str | None = None,
                     temperature: float = 0.7, api_key: str | None = None,
-                    timeout: int = 120, retries: int = 2) -> str:
+                    timeout: int = 120, retries: int = 2,
+                    max_tokens: int | None = None) -> str:
     """Один вызов OpenRouter chat/completions. Ретраи на 429/5xx и таймаут/сеть."""
     api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
@@ -117,6 +118,8 @@ def call_openrouter(system: str, user: str, *, model: str | None = None,
             {"role": "user", "content": user},
         ],
     }
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     for attempt in range(retries + 1):
         try:
             r = requests.post(OPENROUTER_URL, headers=headers, json=payload,
@@ -138,6 +141,24 @@ def call_openrouter(system: str, user: str, *, model: str | None = None,
     raise RuntimeError("call_openrouter: исчерпаны попытки")
 
 
+# Трактовка должна уместиться в одно сообщение Telegram (лимит 4096 символов).
+TELEGRAM_LIMIT = 4096
+INTERPRET_MAX_TOKENS = 2000        # запас, чтобы генерация не резалась на полуслове
+# Модель при сжатии стабильно перебирает цель в ~1.4 раза, поэтому целимся низко,
+# чтобы перебор всё равно уложился под лимит Telegram.
+COMPRESS_TARGET = 2400
+COMPRESS_ATTEMPTS = 3
+
+_COMPRESS_SYSTEM = (
+    "Ты — редактор Таро-бота. Сократи готовую трактовку так, чтобы ВЕСЬ текст был "
+    "СТРОГО не длиннее {limit} символов — это жёсткий лимит, уложись обязательно. "
+    "Сохрани все пять блоков с их заголовками, порядок, тёплый мягкий тон и "
+    "короткое тире «–». Если в тексте есть медицинский дисклеймер про обращение к "
+    "врачу — сохрани его дословно. Для больших раскладов ужимай пояснения по "
+    "позициям до одной короткой фразы. Ничего не добавляй, только убирай лишнее."
+)
+
+
 def interpret(context: dict, *, model: str | None = None,
               temperature: float = 0.7, api_key: str | None = None) -> str:
     """По (вопрос, расклад, уже вытянутые карты) вернуть трактовку из 5 блоков.
@@ -145,12 +166,27 @@ def interpret(context: dict, *, model: str | None = None,
     context = {name, gender, question, spread_id, spread (dict из spreads.yaml),
     cards (список пар из deck.draw)}. Карты уже вытянуты — здесь не тянем и в БД
     не пишем. Позиции берутся из spread['positions'] через build_layout().
+
+    Результат гарантированно стремится уложиться в одно сообщение Telegram:
+    промпт просит ≤3200 символов, а если модель всё же вышла за лимит (обычно на
+    больших раскладах — год, совместимость), делаем проход сжатия, сохраняя все
+    5 блоков и медицинский дисклеймер.
     """
     system, user_tpl = load_prompt()
     layout = build_layout(context["spread"], context["cards"])
     user_msg = _render_user(user_tpl, context, layout)
-    return call_openrouter(system, user_msg, model=model,
-                           temperature=temperature, api_key=api_key)
+    text = call_openrouter(system, user_msg, model=model,
+                           temperature=temperature, api_key=api_key,
+                           max_tokens=INTERPRET_MAX_TOKENS)
+
+    for _ in range(COMPRESS_ATTEMPTS):
+        if len(text) <= TELEGRAM_LIMIT:
+            break
+        compress_system = _COMPRESS_SYSTEM.format(limit=COMPRESS_TARGET)
+        text = call_openrouter(compress_system, text, model=model,
+                               temperature=0.3, api_key=api_key,
+                               max_tokens=INTERPRET_MAX_TOKENS)
+    return text
 
 
 # classify() (вопрос -> spread_id) намеренно живёт в src/classifier.py, а не здесь:
