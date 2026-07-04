@@ -18,6 +18,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    # Этот VPS (РФ) фильтрует часть IP-диапазона Telegram, а DNS отдаёт
+    # заблокированный адрес. Пиним рабочий IP api.telegram.org.
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     depends_on:
       db:
         condition: service_healthy
