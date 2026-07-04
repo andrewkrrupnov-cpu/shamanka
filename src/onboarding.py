@@ -52,7 +52,7 @@ async def start(message: Message, state: FSMContext) -> None:
     if user.onboarded:
         await message.answer(
             f"Снова ты, {user.name}. Огонь помнит тебя.\n"
-            "Садись. О чём молчит твоё сердце?",
+            "Коснись «Сделать расклад» внизу, когда будешь готова.",
             reply_markup=MAIN_KEYBOARD,
         )
         return
@@ -88,8 +88,8 @@ async def got_gender(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         f"Вот и всё, {name}. Теперь между нами есть нить. 🌿\n\n"
-        "Спрашивай, когда захочешь – о любви, дороге, деле или тревоге. "
-        "Я раскину карты и скажу, что вижу в дыму.",
+        "Коснись «Сделать расклад» внизу, когда захочешь заглянуть в карты – "
+        "о любви, дороге, деле или тревоге.",
         reply_markup=MAIN_KEYBOARD,
     )
     await callback.answer()

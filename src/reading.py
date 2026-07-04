@@ -1,15 +1,18 @@
-"""Главный поток: вопрос пользователя → готовый расклад с трактовкой.
+"""Главный поток: расклад запускается ТОЛЬКО кнопкой «Сделать расклад».
 
-Связывает изолированные модули в один сценарий:
-  1. classify(question)      → spread_id (src/classifier.py, LLM по правилам)
-  2. deck.draw(n)            → карты без повторов, ориентация 50/50 (src/deck.py)
-  3. db.create_reading(...)  → фиксируем тягу В БД ДО генерации текста
-  4. llm.interpret(context)  → трактовка из 5 блоков (src/llm.py, Gemini)
-  5. отправка карт альбомом (src/cards.py) + текст трактовки
+Сценарий:
+  1. Тап по кнопке → просим назвать вопрос (входим в состояние ожидания вопроса).
+  2. Пользователь пишет вопрос → валидируем (is_meaningful_question): билиберду
+     отсекаем и просим перефразировать.
+  3. classify(question)      → spread_id (src/classifier.py, LLM по правилам)
+  4. deck.draw(n)            → карты без повторов, ориентация 50/50 (src/deck.py)
+  5. db.create_reading(...)  → фиксируем тягу В БД ДО генерации текста
+  6. llm.interpret(context)  → трактовка Шаманки (src/llm.py, Gemini)
+  7. карты альбомом + текст фрагментами; в конце — кнопка «ещё один расклад».
 
-Сервис бесплатный: пейволла и списания free_readings здесь нет.
-classify()/interpret() синхронные (requests) — крутим их в asyncio.to_thread,
-чтобы не блокировать event loop aiogram.
+Просто набранный текст (без кнопки) расклад НЕ запускает — бот мягко напоминает
+про кнопку. Сервис бесплатный: пейволла нет. classify/interpret синхронные —
+крутим в asyncio.to_thread, чтобы не блокировать event loop aiogram.
 """
 from __future__ import annotations
 
@@ -19,18 +22,24 @@ import re
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from . import cards as card_images
 from . import db, deck
-from .classifier import classify
+from .classifier import classify, is_meaningful_question
 from .config import load_spreads
-from .keyboards import MAIN_KEYBOARD, MAKE_READING
+from .keyboards import AGAIN_KEYBOARD, MAIN_KEYBOARD, READING_BUTTONS
 from .llm import interpret
 
 logger = logging.getLogger("shamanka.reading")
 
 router = Router(name="reading")
+
+
+class Reading(StatesGroup):
+    waiting_question = State()
 
 FALLBACK_SPREAD_ID = "proshloe_nastoyashee_budushee"
 TELEGRAM_LIMIT = 4096  # максимум символов в одном сообщении
@@ -82,34 +91,42 @@ def _fragments(text: str) -> list[str]:
     return messages or [text.strip()]
 
 
-@router.message(F.text == MAKE_READING)
-async def prompt_question(message: Message) -> None:
-    """Тап по кнопке «Сделать расклад» — просим назвать вопрос."""
+@router.message(F.text.in_(READING_BUTTONS))
+async def start_reading(message: Message, state: FSMContext) -> None:
+    """Тап по кнопке «Сделать расклад» / «ещё один» — просим назвать вопрос."""
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
         await message.answer(
             "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
         )
         return
-    await message.answer(
-        "О чём молчит твоё сердце? Назови – и я раскину карты.",
-        reply_markup=MAIN_KEYBOARD,
-    )
+    await state.set_state(Reading.waiting_question)
+    await message.answer("О чём молчит твоё сердце? Назови – и я раскину карты.")
 
 
-@router.message(F.text & ~F.text.startswith("/") & (F.text != MAKE_READING))
-async def handle_question(message: Message) -> None:
+@router.message(Reading.waiting_question, F.text, ~F.text.startswith("/"),
+                ~F.text.in_(READING_BUTTONS))
+async def do_reading(message: Message, state: FSMContext) -> None:
+    """Вопрос назван — валидируем и, если внятно, делаем расклад."""
     user = await db.get_user(message.from_user.id)
     if user is None or not user.onboarded:
+        await state.clear()
         await message.answer(
             "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
         )
         return
 
     question = message.text.strip()
-    if not question:
+
+    # Отсекаем билиберду — остаёмся в ожидании и просим перефразировать.
+    if not await asyncio.to_thread(is_meaningful_question, question):
+        await message.answer(
+            "Твои слова рассыпались, как песок сквозь пальцы – я не разобрала "
+            "вопроса. Спроси иначе, яснее: о чём душа хочет знать? 🌙"
+        )
         return
 
+    await state.clear()
     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
     notice = await message.answer("Тасую тени, слушаю огонь… 🔥")
 
@@ -145,7 +162,22 @@ async def handle_question(message: Message) -> None:
     await card_images.send_album(message, drawn)
     messages = _fragments(text)
     for i, part in enumerate(messages):
-        # клавиатуру возвращаем на последнем сообщении, чтобы кнопка осталась внизу
+        # на последнем сообщении — кнопка «сделать ещё один расклад».
         await message.answer(
-            part, reply_markup=MAIN_KEYBOARD if i == len(messages) - 1 else None
+            part, reply_markup=AGAIN_KEYBOARD if i == len(messages) - 1 else None
         )
+
+
+@router.message(F.text, ~F.text.startswith("/"))
+async def nudge_to_button(message: Message) -> None:
+    """Любой текст вне сценария: расклад — только по кнопке."""
+    user = await db.get_user(message.from_user.id)
+    if user is None or not user.onboarded:
+        await message.answer(
+            "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
+        )
+        return
+    await message.answer(
+        "Когда захочешь заглянуть в карты – коснись «Сделать расклад» внизу. 🔮",
+        reply_markup=MAIN_KEYBOARD,
+    )

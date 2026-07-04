@@ -196,6 +196,52 @@ def classify(
     return spread_id
 
 
+# --------------------------------------------------------------------------- #
+#  Валидация запроса (отсев билиберды перед раскладом)
+# --------------------------------------------------------------------------- #
+VALIDATION_SYSTEM = (
+    "Ты — фильтр запросов для Таро-бота «Шаманка». Реши, есть ли в сообщении "
+    "внятный вопрос или тема для расклада: о жизни, любви, отношениях, работе, "
+    "деньгах, выборе, будущем, чувствах, себе, судьбе и подобном. "
+    "Ответь СТРОГО JSON без пояснений: {\"ok\": true} — если это осмысленный "
+    "запрос; {\"ok\": false} — если это бессмыслица, случайный набор символов или "
+    "букв, спам, только эмодзи/цифры или пустота."
+)
+
+
+def is_meaningful_question(question: str, *, model: str | None = None) -> bool:
+    """True, если текст — внятный запрос для расклада. Билиберду/пустоту отсекает.
+
+    Сначала дешёвые эвристики, затем лёгкая модель. Если модель недоступна —
+    не блокируем пользователя (возвращаем True).
+    """
+    q = (question or "").strip()
+    if len(q) < 3:
+        return False
+    letters = re.findall(r"[^\W\d_]", q, flags=re.UNICODE)
+    if len(letters) < 3:  # почти нет букв — символы/цифры/эмодзи
+        return False
+
+    model = model or os.getenv("OPENROUTER_CLASSIFIER_MODEL", DEFAULT_MODEL)
+    messages = [
+        {"role": "system", "content": VALIDATION_SYSTEM},
+        {"role": "user", "content": q},
+    ]
+    try:
+        raw = openrouter_chat(messages, model=model, temperature=0.0, max_tokens=10,
+                              response_format={"type": "json_object"})
+    except Exception:
+        try:
+            raw = openrouter_chat(messages, model=model, temperature=0.0, max_tokens=10)
+        except Exception:
+            return True  # модель недоступна — пропускаем, чтобы не мешать живым
+
+    m = re.search(r'"ok"\s*:\s*(true|false)', raw.lower())
+    if m:
+        return m.group(1) == "true"
+    return "false" not in raw.lower()  # не разобрали — трактуем мягко
+
+
 if __name__ == "__main__":
     import sys
 
