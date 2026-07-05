@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -47,8 +47,20 @@ class Onboarding(StatesGroup):
 
 
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext) -> None:
+async def start(message: Message, state: FSMContext, command: CommandObject) -> None:
     user = await db.get_or_create_user(message.from_user.id)
+
+    # Диплинк-активация промокода: t.me/bot?start=promo_CODE
+    payload = command.args or ""
+    if payload.startswith("promo_"):
+        ok, res = await db.redeem_promo(payload[len("promo_"):], message.from_user.id)
+        if ok:
+            await message.answer(f"🎁 Промокод принят – тебе открыто +{res} раскладов!")
+        elif res == "used":
+            await message.answer("Этот промокод уже использован 🌙")
+        else:
+            await message.answer("Такого промокода нет – проверь ссылку 🌙")
+
     if user.onboarded:
         await message.answer(
             f"Снова ты, {user.name}. Огонь помнит тебя.\n"

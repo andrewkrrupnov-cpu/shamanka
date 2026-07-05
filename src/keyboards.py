@@ -10,9 +10,18 @@ DAILY_CARD = "🌙 Карта дня"
 DAILY_ON = "🔔 Подключить карту дня"
 DAILY_OFF = "🔕 Отключить карту дня"
 BUY_READINGS = "💫 Купить расклады"
+GIFT_READINGS = "🎁 Подарить расклады"
+PROFILE = "👤 Профиль"
+ACTIVATE_PROMO = "🎟 Активировать промокод"
 
 # Кнопки, запускающие сценарий расклада.
 READING_BUTTONS = {MAKE_READING, MAKE_ANOTHER}
+
+# Все ярлыки меню — чтобы не путать их с вводом (промокод, вопрос и т.п.).
+ALL_BUTTONS = {
+    MAKE_READING, MAKE_ANOTHER, DAILY_CARD, DAILY_ON, DAILY_OFF,
+    BUY_READINGS, GIFT_READINGS, PROFILE, ACTIVATE_PROMO,
+}
 
 
 def main_keyboard(daily_on: bool = False, *, again: bool = False) -> ReplyKeyboardMarkup:
@@ -24,7 +33,8 @@ def main_keyboard(daily_on: bool = False, *, again: bool = False) -> ReplyKeyboa
         keyboard=[
             [KeyboardButton(text=reading_btn)],
             [KeyboardButton(text=DAILY_CARD), KeyboardButton(text=daily_toggle)],
-            [KeyboardButton(text=BUY_READINGS)],
+            [KeyboardButton(text=BUY_READINGS), KeyboardButton(text=GIFT_READINGS)],
+            [KeyboardButton(text=PROFILE), KeyboardButton(text=ACTIVATE_PROMO)],
         ],
         resize_keyboard=True,
         is_persistent=True,  # меню всегда открыто, не прячется в контролах Telegram

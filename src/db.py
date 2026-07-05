@@ -8,7 +8,8 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+import secrets
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
@@ -73,6 +74,21 @@ class Reading(Base):
     interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Promo(Base):
+    __tablename__ = "promocodes"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    readings: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    used_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
@@ -213,3 +229,44 @@ async def list_daily_subscribers() -> list[User]:
     async with session() as s:
         res = await s.execute(select(User).where(User.daily_card.is_(True)))
         return list(res.scalars().all())
+
+
+# Без похожих символов (O/0, I/1) — чтобы промокод не путали при пересылке.
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+async def create_promo(readings: int, created_by: int | None = None) -> str:
+    """Сгенерировать уникальный одноразовый промокод на N раскладов."""
+    async with session() as s:
+        for _ in range(10):
+            code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+            if await s.get(Promo, code) is None:
+                s.add(Promo(code=code, readings=readings, created_by=created_by))
+                await s.commit()
+                return code
+    raise RuntimeError("не удалось сгенерировать уникальный промокод")
+
+
+async def redeem_promo(code: str, user_id: int) -> tuple[bool, int | str]:
+    """Активировать промокод: (True, N раскладов) или (False, причина).
+
+    Одноразово и атомарно: строка блокируется FOR UPDATE, повторная активация
+    невозможна. Причины: 'not_found', 'used', 'no_user'.
+    """
+    code = (code or "").strip().upper()
+    if not code:
+        return (False, "not_found")
+    async with session() as s:
+        promo = await s.get(Promo, code, with_for_update=True)
+        if promo is None:
+            return (False, "not_found")
+        if promo.used_by is not None:
+            return (False, "used")
+        user = await s.get(User, user_id)
+        if user is None:
+            return (False, "no_user")
+        promo.used_by = user_id
+        promo.used_at = datetime.now(timezone.utc)
+        user.free_readings += promo.readings
+        await s.commit()
+        return (True, promo.readings)
