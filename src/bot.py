@@ -2,7 +2,27 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
+import socket
+
+import aiohttp
+
+# Этот VPS фильтрует часть IP Telegram, а DNS отдаёт заблокированный IPv4 и
+# нероутируемый IPv6 → aiohttp зависает/таймаутит на старте. Заставляем ВСЕ
+# TCP-соединения aiogram идти по IPv4 и резолвить через getaddrinfo (уважает
+# /etc/hosts, куда docker-compose пинит рабочий IP api.telegram.org).
+_orig_connector_init = aiohttp.TCPConnector.__init__
+
+
+@functools.wraps(_orig_connector_init)
+def _ipv4_connector_init(self, *args, **kwargs):
+    kwargs.setdefault("family", socket.AF_INET)
+    kwargs.setdefault("resolver", aiohttp.ThreadedResolver())
+    _orig_connector_init(self, *args, **kwargs)
+
+
+aiohttp.TCPConnector.__init__ = _ipv4_connector_init
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
