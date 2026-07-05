@@ -82,6 +82,11 @@ class Promo(Base):
 
     code: Mapped[str] = mapped_column(String(32), primary_key=True)
     readings: Mapped[int] = mapped_column(Integer, nullable=False)
+    # reusable=True — код без лимита использований (напр. промо-акция). Платные
+    # подарочные коды остаются одноразовыми (reusable=False).
+    reusable: Mapped[bool] = mapped_column(
+        default=False, server_default="false", nullable=False
+    )
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     used_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -111,6 +116,10 @@ async def create_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
             "daily_card BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE promocodes ADD COLUMN IF NOT EXISTS "
+            "reusable BOOLEAN NOT NULL DEFAULT FALSE"
         ))
 
 
@@ -235,13 +244,15 @@ async def list_daily_subscribers() -> list[User]:
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
-async def create_promo(readings: int, created_by: int | None = None) -> str:
-    """Сгенерировать уникальный одноразовый промокод на N раскладов."""
+async def create_promo(readings: int, created_by: int | None = None,
+                       reusable: bool = False) -> str:
+    """Сгенерировать уникальный промокод на N раскладов (по умолчанию одноразовый)."""
     async with session() as s:
         for _ in range(10):
             code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
             if await s.get(Promo, code) is None:
-                s.add(Promo(code=code, readings=readings, created_by=created_by))
+                s.add(Promo(code=code, readings=readings, created_by=created_by,
+                            reusable=reusable))
                 await s.commit()
                 return code
     raise RuntimeError("не удалось сгенерировать уникальный промокод")
@@ -250,8 +261,8 @@ async def create_promo(readings: int, created_by: int | None = None) -> str:
 async def redeem_promo(code: str, user_id: int) -> tuple[bool, int | str]:
     """Активировать промокод: (True, N раскладов) или (False, причина).
 
-    Одноразово и атомарно: строка блокируется FOR UPDATE, повторная активация
-    невозможна. Причины: 'not_found', 'used', 'no_user'.
+    Атомарно (строка блокируется FOR UPDATE). reusable-коды активируются без
+    лимита; одноразовые — только раз. Причины: 'not_found', 'used', 'no_user'.
     """
     code = (code or "").strip().upper()
     if not code:
@@ -260,13 +271,14 @@ async def redeem_promo(code: str, user_id: int) -> tuple[bool, int | str]:
         promo = await s.get(Promo, code, with_for_update=True)
         if promo is None:
             return (False, "not_found")
-        if promo.used_by is not None:
-            return (False, "used")
         user = await s.get(User, user_id)
         if user is None:
             return (False, "no_user")
-        promo.used_by = user_id
-        promo.used_at = datetime.now(timezone.utc)
+        if not promo.reusable:
+            if promo.used_by is not None:
+                return (False, "used")
+            promo.used_by = user_id
+            promo.used_at = datetime.now(timezone.utc)
         user.free_readings += promo.readings
         await s.commit()
         return (True, promo.readings)
