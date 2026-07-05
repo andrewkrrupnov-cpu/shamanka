@@ -43,6 +43,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger("shamanka")
 
+# Экран до нажатия «Старт»: описание бота (setMyDescription) и короткое описание.
+# Картинку этого экрана Bot API менять не даёт — только @BotFather вручную.
+BOT_DESCRIPTION = (
+    "🌙 Шаманка — глубокие расклады Таро у костра на краю времён.\n\n"
+    "Ты задаёшь вопрос — о любви, дороге, деле или судьбе, — а я сама выбираю "
+    "узор расклада под твою задачу. Для каждого вопроса рождается своя "
+    "методология, а не один шаблон на всех: карты ложатся так, как велит именно "
+    "твой вопрос.\n\n"
+    "Что выпало — прочту глубоко и по делу, тёплым, но ясным голосом.\n\n"
+    "Нажми «Старт» и подойди ближе к огню."
+)
+BOT_SHORT_DESCRIPTION = (
+    "Глубокие расклады Таро у костра. Для каждого вопроса — свой узор расклада, "
+    "выбранный под твою задачу. 🌙"
+)
+
+
+async def _apply_bot_profile(bot: Bot) -> None:
+    """Обновить описание бота (экран до «Старт»). Не критично для запуска."""
+    try:
+        await asyncio.wait_for(bot.set_my_description(BOT_DESCRIPTION), timeout=15)
+        await asyncio.wait_for(
+            bot.set_my_short_description(BOT_SHORT_DESCRIPTION), timeout=15
+        )
+        logger.info("Описание бота обновлено")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Не удалось обновить описание бота (%s)", e)
+
 
 async def main() -> None:
     config = load_config()
@@ -64,6 +92,8 @@ async def main() -> None:
     dp.include_router(reading_router)
 
     asyncio.create_task(daily_loop(bot))  # утренняя рассылка карты дня подписчикам
+
+    await _apply_bot_profile(bot)  # описание экрана до «Старт»
 
     logger.info("Бот запускается (long polling)…")
     # На этом VPS первый запрос к Telegram изредка залипает — не даём delete_webhook
