@@ -31,7 +31,7 @@ from . import cards as card_images
 from . import db, deck, payments
 from .classifier import classify, is_meaningful_question
 from .config import load_spreads
-from .keyboards import AGAIN_KEYBOARD, MAIN_KEYBOARD, READING_BUTTONS
+from .keyboards import READING_BUTTONS, main_keyboard
 from .llm import interpret
 
 logger = logging.getLogger("shamanka.reading")
@@ -44,17 +44,6 @@ class Reading(StatesGroup):
 
 FALLBACK_SPREAD_ID = "proshloe_nastoyashee_budushee"
 TELEGRAM_LIMIT = 4096  # максимум символов в одном сообщении
-
-# Пол хранится кодом ("male"/"female"/"other"); в промпт нужен русский род.
-_GENDER_RU = {
-    "male": "мужской", "мужской": "мужской", "м": "мужской",
-    "female": "женский", "женский": "женский", "ж": "женский",
-}
-
-
-def _gender_ru(code: str | None) -> str:
-    return _GENDER_RU.get((code or "").strip().lower(), "не указан")
-
 
 # Статичные варианты реплик (ротация random.choice, без затрат на токены).
 ASK_PROMPTS = [
@@ -216,7 +205,7 @@ async def do_reading(message: Message, state: FSMContext) -> None:
 
         context = {
             "name": user.name,
-            "gender": _gender_ru(user.gender),
+            "gender": db.gender_ru(user.gender),
             "question": question,
             "spread_id": spread_id,
             "spread": spread,
@@ -237,17 +226,18 @@ async def do_reading(message: Message, state: FSMContext) -> None:
         await message.answer(card_list)  # картинок нет — список отдельным сообщением
 
     remaining = await db.spend_reading(user.id)  # списываем расклад с баланса
+    again_kb = main_keyboard(user.daily_card, again=True)
     messages = _fragments(text)
     for i, part in enumerate(messages):
         last = i == len(messages) - 1
         # кнопку вешаем на последнее сообщение (если нет хвоста про остаток)
-        kb = AGAIN_KEYBOARD if last and remaining != 0 else None
+        kb = again_kb if last and remaining != 0 else None
         await message.answer(part, reply_markup=kb)
     if remaining == 0:
         await message.answer(
             "🌙 Это был твой последний расклад. Чтобы открыть новые дороги – "
             "коснись «Купить расклады» внизу.",
-            reply_markup=AGAIN_KEYBOARD,
+            reply_markup=again_kb,
         )
 
 
@@ -262,5 +252,5 @@ async def nudge_to_button(message: Message) -> None:
         return
     await message.answer(
         "Когда захочешь заглянуть в карты – коснись «Сделать расклад» внизу. 🔮",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=main_keyboard(user.daily_card),
     )

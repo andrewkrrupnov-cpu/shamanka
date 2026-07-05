@@ -1,4 +1,4 @@
-"""Постоянные reply-клавиатуры бота (кнопки под полем ввода)."""
+"""Постоянные reply-клавиатуры бота (всегда видимое меню под полем ввода)."""
 from __future__ import annotations
 
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
@@ -6,21 +6,27 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 # Тексты кнопок; используются и как ярлыки, и как фильтры в хендлерах.
 MAKE_READING = "🔮 Сделать расклад"
 MAKE_ANOTHER = "🔮 Сделать ещё один расклад"
+DAILY_CARD = "🌙 Карта дня"
+DAILY_ON = "🔔 Подключить карту дня"
+DAILY_OFF = "🔕 Отключить карту дня"
 BUY_READINGS = "💫 Купить расклады"
 
-# Обе кнопки запускают один и тот же сценарий расклада.
+# Кнопки, запускающие сценарий расклада.
 READING_BUTTONS = {MAKE_READING, MAKE_ANOTHER}
 
-# Стартовая клавиатура (после онбординга и у вернувшихся).
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text=MAKE_READING)], [KeyboardButton(text=BUY_READINGS)]],
-    resize_keyboard=True,
-    input_field_placeholder="Коснись кнопки, чтобы начать…",
-)
 
-# Клавиатура после готового расклада.
-AGAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text=MAKE_ANOTHER)], [KeyboardButton(text=BUY_READINGS)]],
-    resize_keyboard=True,
-    input_field_placeholder="Коснись кнопки для нового расклада…",
-)
+def main_keyboard(daily_on: bool = False, *, again: bool = False) -> ReplyKeyboardMarkup:
+    """Главное меню. daily_on — подписан ли пользователь на карту дня (тумблер
+    переключается). again=True — после расклада («ещё один»)."""
+    reading_btn = MAKE_ANOTHER if again else MAKE_READING
+    daily_toggle = DAILY_OFF if daily_on else DAILY_ON
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=reading_btn)],
+            [KeyboardButton(text=DAILY_CARD), KeyboardButton(text=daily_toggle)],
+            [KeyboardButton(text=BUY_READINGS)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,  # меню всегда открыто, не прячется в контролах Telegram
+        input_field_placeholder="Коснись кнопки меню…",
+    )

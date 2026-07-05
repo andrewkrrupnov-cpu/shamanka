@@ -17,7 +17,7 @@ from aiogram.types import (
 )
 
 from . import db
-from .keyboards import MAIN_KEYBOARD
+from .keyboards import main_keyboard
 
 router = Router(name="onboarding")
 
@@ -53,7 +53,7 @@ async def start(message: Message, state: FSMContext) -> None:
         await message.answer(
             f"Снова ты, {user.name}. Огонь помнит тебя.\n"
             "Коснись «Сделать расклад» внизу, когда будешь готова.",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=main_keyboard(user.daily_card),
         )
         return
 
@@ -90,7 +90,7 @@ async def got_gender(callback: CallbackQuery, state: FSMContext) -> None:
         f"Вот и всё, {name}. Теперь между нами есть нить. 🌿\n\n"
         "Первый расклад – мой дар тебе. Коснись «Сделать расклад» внизу, когда "
         "захочешь заглянуть в карты – о любви, дороге, деле или тревоге.",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=main_keyboard(False),
     )
     await callback.answer()
 

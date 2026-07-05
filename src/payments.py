@@ -26,7 +26,7 @@ from aiogram.types import (
 )
 
 from . import db
-from .keyboards import BUY_READINGS, MAIN_KEYBOARD
+from .keyboards import BUY_READINGS, main_keyboard
 
 logger = logging.getLogger("shamanka.payments")
 
@@ -124,8 +124,9 @@ async def on_paid(message: Message) -> None:
         logger.error("Неизвестный payload оплаты: %s", payload)
         return
     balance = await db.add_readings(message.from_user.id, pkg["readings"])
+    user = await db.get_user(message.from_user.id)
     await message.answer(
         f"Огонь принял твою плату 🔥 +{pkg['readings']} раскладов.\n"
         f"Теперь у тебя {balance}. Коснись «Сделать расклад».",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=main_keyboard(user.daily_card if user else False),
     )

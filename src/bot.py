@@ -31,6 +31,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from . import db
 from .config import load_config
+from .daily import daily_loop
+from .daily import router as daily_router
 from .onboarding import router as onboarding_router
 from .payments import router as payments_router
 from .reading import router as reading_router
@@ -58,7 +60,10 @@ async def main() -> None:
     # сообщения не перехватывал общий обработчик вопросов.
     dp.include_router(onboarding_router)
     dp.include_router(payments_router)  # раньше reading: ловит кнопку «Купить» и оплату
+    dp.include_router(daily_router)     # кнопки «Карта дня» и подписки
     dp.include_router(reading_router)
+
+    asyncio.create_task(daily_loop(bot))  # утренняя рассылка карты дня подписчикам
 
     logger.info("Бот запускается (long polling)…")
     await bot.delete_webhook(drop_pending_updates=True)

@@ -19,6 +19,8 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    select,
+    text,
 )
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -47,6 +49,10 @@ class User(Base):
         Integer, nullable=False, default=DEFAULT_FREE_READINGS
     )
     onboarded: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Подписка на ежедневную «карту дня».
+    daily_card: Mapped[bool] = mapped_column(
+        default=False, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -85,6 +91,22 @@ async def create_tables() -> None:
     assert _engine is not None, "init_engine() не вызван"
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all не добавляет новые колонки в существующие таблицы — доводим руками.
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+            "daily_card BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+
+
+# Пол хранится кодом ("male"/"female"/"other"); в промпт нужен русский род.
+_GENDER_RU = {
+    "male": "мужской", "мужской": "мужской", "м": "мужской",
+    "female": "женский", "женский": "женский", "ж": "женский",
+}
+
+
+def gender_ru(code: str | None) -> str:
+    return _GENDER_RU.get((code or "").strip().lower(), "не указан")
 
 
 def session() -> AsyncSession:
@@ -175,3 +197,19 @@ async def add_readings(user_id: int, n: int) -> int:
         await s.commit()
         await s.refresh(user)
         return user.free_readings
+
+
+async def set_daily_card(user_id: int, on: bool) -> None:
+    """Подписать/отписать пользователя от ежедневной карты дня."""
+    async with session() as s:
+        user = await s.get(User, user_id)
+        if user is not None:
+            user.daily_card = on
+            await s.commit()
+
+
+async def list_daily_subscribers() -> list[User]:
+    """Все, кто подписан на карту дня (для утренней рассылки)."""
+    async with session() as s:
+        res = await s.execute(select(User).where(User.daily_card.is_(True)))
+        return list(res.scalars().all())
