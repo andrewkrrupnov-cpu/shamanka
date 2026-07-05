@@ -77,11 +77,14 @@ async def on_profile(message: Message) -> None:
         await message.answer(_NOT_ONBOARDED)
         return
     daily = "включена 🔔" if user.daily_card else "выключена 🔕"
+    edit_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="🔄 Обновить информацию", callback_data="profile:edit")]])
     await message.answer(
-        f"👤 <b>{user.name}</b>\n\n"
+        "👤 <b>Мой профиль</b>\n\n"
+        f"Имя: <b>{user.name}</b>\n"
         f"🔮 Раскладов на балансе: <b>{user.free_readings}</b>\n"
         f"🌙 Карта дня: {daily}",
-        reply_markup=main_keyboard(user.daily_card),
+        reply_markup=edit_kb,
     )
 
 

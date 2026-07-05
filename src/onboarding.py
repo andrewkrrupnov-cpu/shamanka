@@ -88,22 +88,39 @@ async def got_name(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "profile:edit")
+async def edit_profile(callback: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка «Обновить информацию» из профиля — заново проходим знакомство."""
+    await callback.answer()
+    await state.set_state(Onboarding.waiting_name)
+    await callback.message.answer("Назови своё имя заново – и я обновлю нить 🌙")
+
+
 @router.callback_query(Onboarding.waiting_gender, F.data.startswith("gender:"))
 async def got_gender(callback: CallbackQuery, state: FSMContext) -> None:
     gender = callback.data.split(":", 1)[1]
     data = await state.get_data()
     name = data.get("name", "друг")
 
+    user = await db.get_user(callback.from_user.id)
+    was_onboarded = user.onboarded if user else False
     await db.save_profile(callback.from_user.id, name=name, gender=gender)
     await state.clear()
 
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(
-        f"Вот и всё, {name}. Теперь между нами есть нить. 🌿\n\n"
-        "Первый расклад – мой дар тебе. Коснись «Сделать расклад» внизу, когда "
-        "захочешь заглянуть в карты – о любви, дороге, деле или тревоге.",
-        reply_markup=main_keyboard(False),
-    )
+    daily_on = user.daily_card if user else False
+    if was_onboarded:
+        await callback.message.answer(
+            f"Готово, {name}. Твоя нить обновлена 🌿",
+            reply_markup=main_keyboard(daily_on),
+        )
+    else:
+        await callback.message.answer(
+            f"Вот и всё, {name}. Теперь между нами есть нить. 🌿\n\n"
+            "Первый расклад – мой дар тебе. Коснись «Сделать расклад» внизу, когда "
+            "захочешь заглянуть в карты – о любви, дороге, деле или тревоге.",
+            reply_markup=main_keyboard(daily_on),
+        )
     await callback.answer()
 
 
