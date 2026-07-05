@@ -42,19 +42,22 @@ logger = logging.getLogger("shamanka.payments")
 router = Router(name="payments")
 
 PROVIDER_TOKEN = os.getenv("YOOKASSA_PROVIDER_TOKEN", "").strip()
-CURRENCY = "RUB"
+# Пока ЮKassa не подключена (нет provider-token) — платим звёздами Telegram (XTR),
+# они работают без провайдера. Появится токен — автоматически перейдём на рубли/карту.
+USE_STARS = not PROVIDER_TOKEN
 
-# Пакеты для себя: код, число раскладов, цена в КОПЕЙКАХ, название.
+# Пакеты для себя: код, число раскладов, цена в КОПЕЙКАХ (рубли) и в звёздах (≈ ₽/2).
 PACKAGES = [
-    {"code": "p3", "readings": 3, "amount": 4900, "title": "3 расклада"},
-    {"code": "p10", "readings": 10, "amount": 9900, "title": "10 раскладов"},
-    {"code": "p100", "readings": 100, "amount": 29900, "title": "100 раскладов"},
+    {"code": "p3", "readings": 3, "amount": 4900, "stars": 25, "title": "3 расклада"},
+    {"code": "p10", "readings": 10, "amount": 9900, "stars": 50, "title": "10 раскладов"},
+    {"code": "p100", "readings": 100, "amount": 29900, "stars": 150, "title": "100 раскладов"},
 ]
 PACKAGES_BY_CODE = {p["code"]: p for p in PACKAGES}
 
-# Подарок: сколько раскладов и цена.
+# Подарок: сколько раскладов и цена (рубли / звёзды).
 GIFT_COUNT = 100
 GIFT_AMOUNT = 29900
+GIFT_STARS = 150
 
 _NOT_ONBOARDED = "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
 
@@ -65,6 +68,28 @@ class Activation(StatesGroup):
 
 def _rub(amount_kop: int) -> str:
     return f"{amount_kop // 100} ₽"
+
+
+def _price(amount_kop: int, stars: int) -> str:
+    """Цена в активной валюте: звёзды (пока нет ЮKassa) или рубли."""
+    return f"{stars} ⭐" if USE_STARS else _rub(amount_kop)
+
+
+async def _send_invoice(message: Message, *, title: str, description: str,
+                        payload: str, label: str, amount_kop: int, stars: int) -> None:
+    """Отправить инвойс: звёздами (XTR, без токена) либо рублями (ЮKassa-токен)."""
+    if USE_STARS:
+        await message.answer_invoice(
+            title=title, description=description, payload=payload,
+            provider_token="", currency="XTR",
+            prices=[LabeledPrice(label=label, amount=stars)],
+        )
+    else:
+        await message.answer_invoice(
+            title=title, description=description, payload=payload,
+            provider_token=PROVIDER_TOKEN, currency="RUB",
+            prices=[LabeledPrice(label=label, amount=amount_kop)],
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -93,7 +118,7 @@ async def on_profile(message: Message) -> None:
 # --------------------------------------------------------------------------- #
 def paywall_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{p['title']} — {_rub(p['amount'])}",
+        [InlineKeyboardButton(text=f"{p['title']} — {_price(p['amount'], p['stars'])}",
                               callback_data=f"buy:{p['code']}")]
         for p in PACKAGES
     ])
@@ -106,10 +131,11 @@ def paywall_text(balance: int) -> str:
              "Первый расклад – мой дар. Дальше выбери, сколько дорог тебе открыть:",
              ""]
     for p in PACKAGES:
-        one = p["amount"] / p["readings"] / 100
-        lines.append(f"▪️ <b>{p['title']}</b> — {_rub(p['amount'])}  "
-                     f"<i>({one:.0f} ₽ за расклад)</i>")
-    lines += ["", "Оплата картой прямо в Telegram – расклады зачислятся сразу. ✨"]
+        lines.append(f"▪️ <b>{p['title']}</b> — {_price(p['amount'], p['stars'])}")
+    footer = ("Оплата звёздами Telegram ⭐ – расклады зачислятся сразу."
+              if USE_STARS else
+              "Оплата картой прямо в Telegram – расклады зачислятся сразу. ✨")
+    lines += ["", footer]
     return "\n".join(lines)
 
 
@@ -136,18 +162,12 @@ async def on_buy(callback: CallbackQuery) -> None:
         await callback.answer("Пакет не найден")
         return
     await callback.answer()
-    if not PROVIDER_TOKEN:
-        await callback.message.answer(
-            "Оплата вот-вот откроется – мы уже зажигаем этот огонь 🔥 Загляни позже."
-        )
-        return
-    await callback.message.answer_invoice(
+    await _send_invoice(
+        callback.message,
         title=f"Шаманка: {pkg['title']}",
         description=f"{pkg['readings']} раскладов Таро от Шаманки.",
         payload=f"pkg:{pkg['code']}",
-        provider_token=PROVIDER_TOKEN,
-        currency=CURRENCY,
-        prices=[LabeledPrice(label=pkg["title"], amount=pkg["amount"])],
+        label=pkg["title"], amount_kop=pkg["amount"], stars=pkg["stars"],
     )
 
 
@@ -156,12 +176,13 @@ async def on_buy(callback: CallbackQuery) -> None:
 # --------------------------------------------------------------------------- #
 @router.message(F.text == GIFT_READINGS)
 async def on_gift(message: Message) -> None:
+    price = _price(GIFT_AMOUNT, GIFT_STARS)
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text=f"Подарить {GIFT_COUNT} раскладов — {_rub(GIFT_AMOUNT)}",
+        text=f"Подарить {GIFT_COUNT} раскладов — {price}",
         callback_data="gift:buy")]])
     await message.answer(
         "🎁 <b>Подарить расклады</b>\n\n"
-        f"Оплати {_rub(GIFT_AMOUNT)} – и я создам уникальный промокод на "
+        f"Оплати {price} – и я создам уникальный промокод на "
         f"{GIFT_COUNT} раскладов. Перешлёшь его другу, а он активирует в боте.",
         reply_markup=kb,
     )
@@ -170,19 +191,13 @@ async def on_gift(message: Message) -> None:
 @router.callback_query(F.data == "gift:buy")
 async def gift_buy(callback: CallbackQuery) -> None:
     await callback.answer()
-    if not PROVIDER_TOKEN:
-        await callback.message.answer(
-            "Оплата вот-вот откроется – мы уже зажигаем этот огонь 🔥 Загляни позже."
-        )
-        return
-    await callback.message.answer_invoice(
+    await _send_invoice(
+        callback.message,
         title=f"Шаманка: подарок {GIFT_COUNT} раскладов",
         description=f"Промокод на {GIFT_COUNT} раскладов Таро в подарок.",
         payload="gift:p100",
-        provider_token=PROVIDER_TOKEN,
-        currency=CURRENCY,
-        prices=[LabeledPrice(label=f"Подарок: {GIFT_COUNT} раскладов",
-                             amount=GIFT_AMOUNT)],
+        label=f"Подарок: {GIFT_COUNT} раскладов",
+        amount_kop=GIFT_AMOUNT, stars=GIFT_STARS,
     )
 
 
