@@ -12,6 +12,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from . import db
 from .config import load_config
 from .onboarding import router as onboarding_router
+from .payments import router as payments_router
 from .reading import router as reading_router
 
 logging.basicConfig(
@@ -36,6 +37,7 @@ async def main() -> None:
     # Порядок важен: онбординг (FSM-состояния) раньше, чтобы во время знакомства
     # сообщения не перехватывал общий обработчик вопросов.
     dp.include_router(onboarding_router)
+    dp.include_router(payments_router)  # раньше reading: ловит кнопку «Купить» и оплату
     dp.include_router(reading_router)
 
     logger.info("Бот запускается (long polling)…")

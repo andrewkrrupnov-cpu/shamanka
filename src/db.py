@@ -27,8 +27,9 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# Сколько бесплатных раскладов даётся новому пользователю (пейволл — позже).
-DEFAULT_FREE_READINGS = 3
+# Первый расклад — бесплатно. Дальше баланс пополняется покупкой пакетов.
+# Поле free_readings теперь = остаток раскладов (бесплатные + купленные).
+DEFAULT_FREE_READINGS = 1
 
 
 class Base(DeclarativeBase):
@@ -151,3 +152,26 @@ async def set_reading_text(reading_id: int, interpretation: str) -> None:
         if reading is not None:
             reading.interpretation = interpretation
             await s.commit()
+
+
+async def spend_reading(user_id: int) -> int:
+    """Списать один расклад с баланса. Возвращает остаток или -1, если нечего."""
+    async with session() as s:
+        user = await s.get(User, user_id)
+        if user is None or user.free_readings <= 0:
+            return -1
+        user.free_readings -= 1
+        await s.commit()
+        return user.free_readings
+
+
+async def add_readings(user_id: int, n: int) -> int:
+    """Пополнить баланс раскладов (после оплаты). Возвращает новый остаток."""
+    async with session() as s:
+        user = await s.get(User, user_id)
+        if user is None:
+            return 0
+        user.free_readings += n
+        await s.commit()
+        await s.refresh(user)
+        return user.free_readings

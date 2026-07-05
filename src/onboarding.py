@@ -88,8 +88,8 @@ async def got_gender(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         f"Вот и всё, {name}. Теперь между нами есть нить. 🌿\n\n"
-        "Коснись «Сделать расклад» внизу, когда захочешь заглянуть в карты – "
-        "о любви, дороге, деле или тревоге.",
+        "Первый расклад – мой дар тебе. Коснись «Сделать расклад» внизу, когда "
+        "захочешь заглянуть в карты – о любви, дороге, деле или тревоге.",
         reply_markup=MAIN_KEYBOARD,
     )
     await callback.answer()

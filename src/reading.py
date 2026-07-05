@@ -28,7 +28,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from . import cards as card_images
-from . import db, deck
+from . import db, deck, payments
 from .classifier import classify, is_meaningful_question
 from .config import load_spreads
 from .keyboards import AGAIN_KEYBOARD, MAIN_KEYBOARD, READING_BUTTONS
@@ -165,6 +165,9 @@ async def start_reading(message: Message, state: FSMContext) -> None:
             "Мы ещё не сидели у одного огня. Набери /start – и я узнаю тебя 🌙"
         )
         return
+    if user.free_readings <= 0:  # расклады кончились — витрина вместо вопроса
+        await payments.show_paywall(message, 0)
+        return
     await state.set_state(Reading.waiting_question)
     await message.answer(random.choice(ASK_PROMPTS))
 
@@ -189,6 +192,11 @@ async def do_reading(message: Message, state: FSMContext) -> None:
             "Твои слова рассыпались, как песок сквозь пальцы – я не разобрала "
             "вопроса. Спроси иначе, яснее: о чём душа хочет знать? 🌙"
         )
+        return
+
+    if user.free_readings <= 0:  # подстраховка: баланс кончился
+        await state.clear()
+        await payments.show_paywall(message, 0)
         return
 
     await state.clear()
@@ -227,11 +235,19 @@ async def do_reading(message: Message, state: FSMContext) -> None:
     card_list = _card_list(drawn)
     if not await card_images.send_album(message, drawn, caption=card_list):
         await message.answer(card_list)  # картинок нет — список отдельным сообщением
+
+    remaining = await db.spend_reading(user.id)  # списываем расклад с баланса
     messages = _fragments(text)
     for i, part in enumerate(messages):
-        # на последнем сообщении — кнопка «сделать ещё один расклад».
+        last = i == len(messages) - 1
+        # кнопку вешаем на последнее сообщение (если нет хвоста про остаток)
+        kb = AGAIN_KEYBOARD if last and remaining != 0 else None
+        await message.answer(part, reply_markup=kb)
+    if remaining == 0:
         await message.answer(
-            part, reply_markup=AGAIN_KEYBOARD if i == len(messages) - 1 else None
+            "🌙 Это был твой последний расклад. Чтобы открыть новые дороги – "
+            "коснись «Купить расклады» внизу.",
+            reply_markup=AGAIN_KEYBOARD,
         )
 
 
