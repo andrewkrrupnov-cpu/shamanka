@@ -5,16 +5,18 @@
 из (jpg, jpeg, png, webp). Так имя файла не зависит от кириллицы и регистра.
 
 Если картинок нет (владелец ещё не залил колоду) — альбом просто не отправляется,
-бот присылает только текст. Ориентация карты передаётся в подписи и в тексте
-трактовки; изображение показываем «как есть» (без физического переворота).
+бот присылает только текст. Перевёрнутую карту показываем перевёрнутой и на
+картинке — поворотом на 180° на лету (см. card_input).
 """
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
-from aiogram.types import FSInputFile, InputMediaPhoto, Message
+from aiogram.types import BufferedInputFile, FSInputFile, InputMediaPhoto, Message
+from PIL import Image
 
-from .deck import FULL_DECK
+from .deck import FULL_DECK, REVERSED
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "cards"
 _EXTS = ("jpg", "jpeg", "png", "webp")
@@ -36,6 +38,25 @@ def image_for(card: str) -> Path | None:
     return None
 
 
+def card_input(card: str, orient: str):
+    """Файл картинки карты для отправки. Перевёрнутую поворачиваем на 180°.
+
+    Прямая — отдаём путь как есть (FSInputFile). Перевёрнутая — крутим на лету
+    через PIL и отдаём байтами (BufferedInputFile). None — если картинки нет.
+    """
+    path = image_for(card)
+    if path is None:
+        return None
+    if orient != REVERSED:
+        return FSInputFile(path)
+    with Image.open(path) as im:
+        fmt = im.format or "PNG"
+        rotated = im.transpose(Image.Transpose.ROTATE_180)
+        buf = io.BytesIO()
+        rotated.save(buf, format=fmt)
+    return BufferedInputFile(buf.getvalue(), filename=f"{path.stem}_rev.{fmt.lower()}")
+
+
 def _chunk(items: list, size: int):
     for i in range(0, len(items), size):
         yield items[i:i + size]
@@ -48,20 +69,22 @@ async def send_album(
 
     caption (HTML) — подпись под альбомом; ставится на первую картинку первой
     группы, поэтому список карт идёт ОДНИМ сообщением с картинками, без дубля.
-    Карты без картинок пропускаются. Альбом бьётся на группы по 10 (лимит TG).
+    Перевёрнутые карты поворачиваются на 180°. Карты без картинок пропускаются.
+    Альбом бьётся на группы по 10 (лимит TG).
     """
-    paths = [p for card, _ in drawn if (p := image_for(card)) is not None]
-    if not paths:
+    inputs = [inp for card, orient in drawn
+              if (inp := card_input(card, orient)) is not None]
+    if not inputs:
         return False
     first_batch = True
-    for batch in _chunk(paths, _MEDIA_GROUP_LIMIT):
+    for batch in _chunk(inputs, _MEDIA_GROUP_LIMIT):
         media = []
-        for i, path in enumerate(batch):
+        for i, inp in enumerate(batch):
             if first_batch and i == 0 and caption:
                 media.append(InputMediaPhoto(
-                    media=FSInputFile(path), caption=caption, parse_mode="HTML"))
+                    media=inp, caption=caption, parse_mode="HTML"))
             else:
-                media.append(InputMediaPhoto(media=FSInputFile(path)))
+                media.append(InputMediaPhoto(media=inp))
         await message.answer_media_group(media)
         first_batch = False
     return True

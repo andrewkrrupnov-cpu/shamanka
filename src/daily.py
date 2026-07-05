@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
-from aiogram.types import FSInputFile, Message
+from aiogram.types import Message
 
 from . import cards as card_images
 from . import db, deck, llm
@@ -50,12 +50,12 @@ async def _send_daily(bot, user: db.User) -> None:
         name=user.name or "", gender=db.gender_ru(user.gender),
     )
     caption = _caption(card, orient, prediction)
-    img = card_images.image_for(card)
-    if img is not None and len(caption) <= 1024:
-        await bot.send_photo(user.id, FSInputFile(img), caption=caption)
+    inp = card_images.card_input(card, orient)  # перевёрнутую повернёт на 180°
+    if inp is not None and len(caption) <= 1024:
+        await bot.send_photo(user.id, inp, caption=caption)
     else:
-        if img is not None:
-            await bot.send_photo(user.id, FSInputFile(img))
+        if inp is not None:
+            await bot.send_photo(user.id, inp)
         await bot.send_message(user.id, caption)
 
 
