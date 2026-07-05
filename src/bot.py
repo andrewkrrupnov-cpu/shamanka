@@ -66,7 +66,14 @@ async def main() -> None:
     asyncio.create_task(daily_loop(bot))  # утренняя рассылка карты дня подписчикам
 
     logger.info("Бот запускается (long polling)…")
-    await bot.delete_webhook(drop_pending_updates=True)
+    # На этом VPS первый запрос к Telegram изредка залипает — не даём delete_webhook
+    # заблокировать старт (сам polling дальше переживает сетевые сбои и ретраит).
+    try:
+        await asyncio.wait_for(
+            bot.delete_webhook(drop_pending_updates=True), timeout=15
+        )
+    except Exception as e:  # noqa: BLE001 — старту важнее дойти до polling
+        logger.warning("delete_webhook не удался (%s) — продолжаем в polling", e)
     await dp.start_polling(bot)
 
 
