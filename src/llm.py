@@ -20,6 +20,19 @@ PROMPT_PATH = ROOT / "prompts" / "interpret.md"
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "google/gemini-2.5-flash"
+
+
+def _proxies() -> dict | None:
+    """Прокси для запросов к OpenRouter (env OPENROUTER_PROXY).
+
+    Нужен, если Cloudflare OpenRouter блокирует IP сервера (напр. РФ-VPS отдаёт
+    403 «Access denied by security policy»). Поддерживает http(s):// и socks5://.
+    Пусто — ходим напрямую.
+    """
+    p = os.getenv("OPENROUTER_PROXY", "").strip()
+    return {"http": p, "https": p} if p else None
+
+
 PROMPT_MARKER = re.compile(r"(?m)^=====\s*USER\s*=====\s*$")
 
 # Медицинские/консультационные дисклеймеры убраны по решению владельца — Саира
@@ -120,7 +133,7 @@ def call_openrouter(system: str, user: str, *, model: str | None = None,
     for attempt in range(retries + 1):
         try:
             r = requests.post(OPENROUTER_URL, headers=headers, json=payload,
-                              timeout=timeout)
+                              timeout=timeout, proxies=_proxies())
         except (requests.ConnectionError, requests.Timeout):
             if attempt < retries:
                 time.sleep(1.5 * (attempt + 1))
@@ -211,7 +224,8 @@ def openrouter_chat(
     if os.getenv("OPENROUTER_TITLE"):
         headers["X-Title"] = os.environ["OPENROUTER_TITLE"]
 
-    resp = requests.post(OPENROUTER_URL, json=payload, headers=headers, timeout=timeout)
+    resp = requests.post(OPENROUTER_URL, json=payload, headers=headers,
+                         timeout=timeout, proxies=_proxies())
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
