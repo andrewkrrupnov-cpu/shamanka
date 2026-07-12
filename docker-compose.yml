@@ -1,3 +1,6 @@
+# Доступ к OpenRouter: Cloudflare блокирует РФ-IP этого VPS (403), поэтому
+# LLM-трафик идёт через внешний SOCKS5-прокси — env OPENROUTER_PROXY в .env.
+# (WireGuard-вариант не взлетел: дата-центр режет протокол по DPI.)
 services:
   db:
     image: postgres:16-alpine
