@@ -199,8 +199,8 @@ async def on_buy(callback: CallbackQuery) -> None:
     await callback.answer()
     await _send_invoice(
         callback.message,
-        title=f"Шаманка: {pkg['title']}",
-        description=f"{pkg['readings']} раскладов Таро от Шаманки.",
+        title=f"Прорицательница: {pkg['title']}",
+        description=f"{pkg['readings']} раскладов Таро от Прорицательницы.",
         payload=f"pkg:{pkg['code']}",
         label=pkg["title"], amount_kop=pkg["amount"], stars=pkg["stars"],
     )
@@ -228,7 +228,7 @@ async def gift_buy(callback: CallbackQuery) -> None:
     await callback.answer()
     await _send_invoice(
         callback.message,
-        title=f"Шаманка: подарок {GIFT_COUNT} раскладов",
+        title="Прорицательница: подарок",  # ≤32 симв. — лимит заголовка инвойса Telegram
         description=f"Промокод на {GIFT_COUNT} раскладов Таро в подарок.",
         payload="gift:p100",
         label=f"Подарок: {GIFT_COUNT} раскладов",
@@ -243,7 +243,7 @@ async def _send_gift_message(message: Message, code: str) -> None:
         text="🔮 Активировать", url=link)]])
     await message.answer("Готово! 🎁 Перешли сообщение ниже тому, кого хочешь одарить:")
     await message.answer(
-        "🎁 <b>Вам подарили доступ к раскладам Шаманки!</b>\n\n"
+        "🎁 <b>Вам подарили доступ к раскладам Прорицательницы!</b>\n\n"
         f"Промокод: <code>{code}</code>\n"
         f"Внутри — {GIFT_COUNT} раскладов Таро.\n\n"
         "Нажмите кнопку ниже, чтобы активировать в боте 🌙",

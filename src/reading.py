@@ -7,7 +7,7 @@
   3. classify(question)      → spread_id (src/classifier.py, LLM по правилам)
   4. deck.draw(n)            → карты без повторов, ориентация 50/50 (src/deck.py)
   5. db.create_reading(...)  → фиксируем тягу В БД ДО генерации текста
-  6. llm.interpret(context)  → трактовка Шаманки (src/llm.py, Gemini)
+  6. llm.interpret(context)  → трактовка Прорицательницы (src/llm.py, Gemini)
   7. карты альбомом + текст фрагментами; в конце — кнопка «ещё один расклад».
 
 Просто набранный текст (без кнопки) расклад НЕ запускает — бот мягко напоминает
@@ -25,14 +25,19 @@ from aiogram import F, Router
 from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from . import cards as card_images
 from . import db, deck, payments
 from .classifier import classify, is_meaningful_question
 from .config import load_spreads
 from .keyboards import READING_BUTTONS, main_keyboard
-from .llm import interpret
+from .llm import interpret, interpret_clarification, suggest_clarifications
 
 logger = logging.getLogger("shamanka.reading")
 
@@ -91,7 +96,7 @@ def _spreads() -> dict:
     return _spreads_cache
 
 
-# Шаманка разделяет мысли строкой из дефисов (`---`). По ней и бьём на сообщения.
+# Прорицательница разделяет мысли строкой из дефисов (`---`). По ней и бьём на сообщения.
 _FRAGMENT_SEP = re.compile(r"(?m)^\s*[-–—]{3,}\s*$")
 
 
@@ -118,7 +123,7 @@ def _split_long(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
 
 
 def _fragments(text: str) -> list[str]:
-    """Разбить ответ Шаманки на сообщения по разделителю `---` (одна мысль = одно)."""
+    """Разбить ответ Прорицательницы на сообщения по разделителю `---` (одна мысль = одно)."""
     parts = [p.strip() for p in _FRAGMENT_SEP.split(text)]
     parts = [p for p in parts if p]
     messages: list[str] = []
@@ -211,8 +216,8 @@ async def do_reading(message: Message, state: FSMContext) -> None:
             "spread": spread,
             "cards": drawn,
         }
-        text = await asyncio.to_thread(interpret, context)
-        text = _to_html(text)  # заголовки **...** -> <b>...</b>, спецсимволы экранированы
+        raw_text = await asyncio.to_thread(interpret, context)
+        text = _to_html(raw_text)  # заголовки **...** -> <b>...</b>, спецсимволы экранированы
         await db.set_reading_text(reading_id, text)
     except Exception:
         logger.exception("Не удалось построить расклад")
@@ -238,6 +243,102 @@ async def do_reading(message: Message, state: FSMContext) -> None:
             "🌙 Это был твой последний расклад. Чтобы открыть новые дороги – "
             "коснись «Купить расклады» внизу.",
             reply_markup=again_kb,
+        )
+
+    # Уточнения: 2 контекстных вопроса кнопками — бесплатно, по тем же картам.
+    context["interpretation"] = raw_text
+    await _offer_clarifications(message, reading_id, context)
+
+
+def _clarify_kb(reading_id: int,
+                indexed_qs: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """Инлайн-кнопки уточнений: по кнопке на вопрос, callback_data=clr:{id}:{idx}."""
+    rows = [[InlineKeyboardButton(text=q, callback_data=f"clr:{reading_id}:{i}")]
+            for i, q in indexed_qs]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _offer_clarifications(message: Message, reading_id: int,
+                                context: dict) -> None:
+    """Сгенерировать и показать уточняющие вопросы. Тихо пропускаем при сбое."""
+    try:
+        questions = await asyncio.to_thread(suggest_clarifications, context)
+    except Exception:
+        logger.exception("Не удалось сгенерировать уточнения")
+        return
+    if not questions:
+        return
+    await db.set_clarifications(reading_id, questions)
+    await message.answer(
+        "🔮 Хочешь копнуть глубже? Коснись вопроса – отвечу по этим же картам:",
+        reply_markup=_clarify_kb(reading_id, list(enumerate(questions))),
+    )
+
+
+@router.callback_query(F.data.startswith("clr:"))
+async def on_clarify(callback: CallbackQuery) -> None:
+    """Тап по уточняющему вопросу — ответ по уже вытянутым картам расклада."""
+    try:
+        _, rid_s, idx_s = callback.data.split(":")
+        reading_id, index = int(rid_s), int(idx_s)
+    except (ValueError, AttributeError):
+        await callback.answer()
+        return
+
+    user = await db.get_user(callback.from_user.id)
+    reading = await db.get_reading(reading_id)
+    if user is None or reading is None or reading.user_id != user.id:
+        await callback.answer("Этот расклад уже не найти 🌙")
+        return
+
+    used = await db.use_clarification(reading_id, index)
+    if used is None:  # уже раскрыто или двойной тап
+        await callback.answer("Это уточнение уже раскрыто 🌙")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    clar_question, remaining = used
+    await callback.answer()
+
+    # Обновляем клавиатуру: убираем использованную кнопку, остальные оставляем.
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=_clarify_kb(reading_id, remaining) if remaining else None)
+    except Exception:
+        pass
+
+    await callback.message.answer(f"🔮 <i>{_to_html(clar_question)}</i>")
+    await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+    notice = await callback.message.answer(random.choice(NOTICE_MESSAGES))
+    try:
+        spreads = _spreads()
+        spread = spreads.get(reading.spread_id) or spreads[FALLBACK_SPREAD_ID]
+        clar_context = {
+            "name": user.name,
+            "gender": db.gender_ru(user.gender),
+            "question": reading.question,
+            "spread_id": reading.spread_id,
+            "spread": spread,
+            "cards": [(c[0], c[1]) for c in reading.cards],
+        }
+        answer = await asyncio.to_thread(
+            interpret_clarification, clar_context, clar_question)
+        answer = _to_html(answer)
+    except Exception:
+        logger.exception("Не удалось раскрыть уточнение")
+        await notice.edit_text(random.choice(ERROR_MESSAGES))
+        return
+
+    await notice.delete()
+    for part in _fragments(answer):
+        await callback.message.answer(part)
+    if not remaining:
+        await callback.message.answer(
+            "Это были все уточнения к этому раскладу. Захочешь новый ответ – "
+            "коснись «Сделать ещё один расклад» внизу. 🌙",
+            reply_markup=main_keyboard(user.daily_card, again=True),
         )
 
 

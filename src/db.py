@@ -72,6 +72,9 @@ class Reading(Base):
     # Вытянутые карты: [["Солнце", "прямая"], ["10 Мечей", "перевёрнутая"], ...]
     cards: Mapped[list] = mapped_column(JSON, nullable=False)
     interpretation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Уточнения к раскладу: {"questions": ["...", "..."], "used": [индексы]}.
+    # Заполняется после генерации трактовки (см. reading.py, llm.suggest_clarifications).
+    clarifications: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -120,6 +123,9 @@ async def create_tables() -> None:
         await conn.execute(text(
             "ALTER TABLE promocodes ADD COLUMN IF NOT EXISTS "
             "reusable BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE readings ADD COLUMN IF NOT EXISTS clarifications JSON"
         ))
 
 
@@ -199,6 +205,44 @@ async def set_reading_text(reading_id: int, interpretation: str) -> None:
         if reading is not None:
             reading.interpretation = interpretation
             await s.commit()
+
+
+async def get_reading(reading_id: int) -> Reading | None:
+    async with session() as s:
+        return await s.get(Reading, reading_id)
+
+
+async def set_clarifications(reading_id: int, questions: list[str]) -> None:
+    """Сохранить сгенерированные уточняющие вопросы к раскладу (пока не использованы)."""
+    async with session() as s:
+        reading = await s.get(Reading, reading_id)
+        if reading is not None:
+            reading.clarifications = {"questions": list(questions), "used": []}
+            await s.commit()
+
+
+async def use_clarification(
+    reading_id: int, index: int
+) -> tuple[str, list[tuple[int, str]]] | None:
+    """Пометить уточнение `index` использованным (атомарно, FOR UPDATE).
+
+    Возвращает (вопрос, оставшиеся [(индекс, вопрос), ...]) либо None, если
+    расклада/индекса нет или уточнение уже раскрыто (защита от двойного тапа).
+    """
+    async with session() as s:
+        reading = await s.get(Reading, reading_id, with_for_update=True)
+        if reading is None or not reading.clarifications:
+            return None
+        questions = list(reading.clarifications.get("questions") or [])
+        used = list(reading.clarifications.get("used") or [])
+        if index < 0 or index >= len(questions) or index in used:
+            return None
+        used.append(index)
+        # JSON-колонка отслеживает изменение только при переприсваивании нового объекта.
+        reading.clarifications = {"questions": questions, "used": used}
+        await s.commit()
+        remaining = [(i, questions[i]) for i in range(len(questions)) if i not in used]
+        return (questions[index], remaining)
 
 
 async def spend_reading(user_id: int) -> int:

@@ -8,6 +8,7 @@ classify() (вопрос -> spread_id) — задача Диалога 3, зде
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -153,14 +154,14 @@ def call_openrouter(system: str, user: str, *, model: str | None = None,
 
 # Лимит одного сообщения Telegram — на него ориентируется разбивка в reading.py.
 TELEGRAM_LIMIT = 4096
-# Ответ Шаманки дробится на 4–7 фрагментов-сообщений, поэтому объём можно давать
+# Ответ Прорицательницы дробится на 4–7 фрагментов-сообщений, поэтому объём можно давать
 # щедрее (примерно вдвое против прежнего) — больше конкретики по картам.
 INTERPRET_MAX_TOKENS = 2400
 
 
 def interpret(context: dict, *, model: str | None = None,
               temperature: float = 0.9, api_key: str | None = None) -> str:
-    """По (вопрос, расклад, уже вытянутые карты) вернуть трактовку голосом Шаманки.
+    """По (вопрос, расклад, уже вытянутые карты) вернуть трактовку голосом Прорицательницы.
 
     context = {name, gender, question, spread_id, spread (dict из spreads.yaml),
     cards (список пар из deck.draw)}. Карты уже вытянуты — здесь не тянем и в БД
@@ -232,10 +233,103 @@ def openrouter_chat(
 
 
 # --------------------------------------------------------------------------- #
+#  Уточнения к раскладу
+# --------------------------------------------------------------------------- #
+# Сколько уточняющих вопросов предлагаем после расклада.
+N_CLARIFICATIONS = 2
+# Генерация вопросов — задача простая, берём дешёвую модель (как классификатор).
+CLARIFY_SUGGEST_MODEL = "google/gemini-2.5-flash-lite"
+
+_SUGGEST_SYSTEM = (
+    "Ты помогаешь Таро-боту «Прорицательница». Человек задал вопрос и уже получил "
+    f"расклад по картам ниже. Предложи РОВНО {N_CLARIFICATIONS} коротких уточняющих "
+    "вопроса, которые человек может задать К ЭТОМУ ЖЕ раскладу, чтобы копнуть глубже — "
+    "по тем же картам, без новой тяги. Вопросы от лица человека, живые и конкретные, "
+    "как «Что он чувствует?», «Какой риск я не вижу?», «С чего мне начать?». Каждый "
+    "≤ 45 символов, без нумерации и кавычек. Ответь СТРОГО в формате JSON без "
+    'пояснений: {"questions": ["...", "..."]}'
+)
+
+_CLARIFY_SYSTEM = (
+    "Ты — Прорицательница, древняя мудрая ведунья у костра. Человек уже получил "
+    "расклад на свой вопрос — карты ниже, они НЕ меняются и новые НЕ тянутся. Теперь "
+    "он задал уточняющий вопрос к этому же раскладу. Ответь образно, но КОНКРЕТНО, "
+    "опираясь на те же карты и их положения — каждый образ разворачивай в практический "
+    "смысл. 2–4 коротких фрагмента, между фрагментами — строка из трёх дефисов `---` "
+    "(это отдельные сообщения). Обращайся на «ты», согласуй род по полю «Пол». НЕ "
+    "здоровайся, без смайлов с лицами, тире только «–». Не перечисляй все карты заново "
+    "— говори по сути уточнения, ссылаясь на нужные карты."
+)
+
+
+def _parse_questions(raw: str) -> list[str]:
+    """Достать список вопросов из ответа модели (JSON или построчный fallback)."""
+    raw = (raw or "").strip()
+    try:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        data = json.loads(m.group(0) if m else raw)
+        qs = data.get("questions") if isinstance(data, dict) else None
+        if isinstance(qs, list):
+            out = [str(q).strip().strip('"').strip() for q in qs if str(q).strip()]
+            if out:
+                return out[:N_CLARIFICATIONS]
+    except (ValueError, AttributeError):
+        pass
+    lines = []
+    for ln in raw.splitlines():
+        ln = ln.strip().lstrip("-•*").lstrip("0123456789").lstrip(".) ").strip()
+        ln = ln.strip('"').strip()
+        if ln:
+            lines.append(ln)
+    return lines[:N_CLARIFICATIONS]
+
+
+def suggest_clarifications(context: dict, *, model: str | None = None,
+                           api_key: str | None = None) -> list[str]:
+    """N коротких уточняющих вопросов по раскладу (дешёвая модель).
+
+    context — как у interpret() плюс необязательный ключ 'interpretation' (сырой
+    текст трактовки) для более точных вопросов. Карты уже вытянуты.
+    """
+    layout = build_layout(context["spread"], context["cards"])
+    interp = (context.get("interpretation") or "").strip()
+    user = (
+        f"Вопрос человека: {context.get('question', '')}\n"
+        f"Расклад «{context['spread']['title']}», карты:\n{layout}\n"
+    )
+    if interp:
+        user += f"\nКоротко из трактовки:\n{interp[:800]}\n"
+    user += f"\nДай {N_CLARIFICATIONS} уточняющих вопроса."
+    raw = call_openrouter(_SUGGEST_SYSTEM, user, model=model or CLARIFY_SUGGEST_MODEL,
+                          temperature=0.8, api_key=api_key, max_tokens=200)
+    return _parse_questions(raw)
+
+
+def interpret_clarification(context: dict, clar_question: str, *,
+                            model: str | None = None, api_key: str | None = None) -> str:
+    """Ответ на уточняющий вопрос по УЖЕ вытянутым картам, голосом Прорицательницы.
+
+    Новую тягу НЕ делает — читает те же карты. Возвращает текст, разбитый на
+    фрагменты строками `---` (как interpret); разбивку на сообщения делает reading.py.
+    """
+    layout = build_layout(context["spread"], context["cards"])
+    user = (
+        f"Имя: {context.get('name', '')}\n"
+        f"Пол: {context.get('gender', '')}\n"
+        f"Изначальный вопрос: {context.get('question', '')}\n"
+        f"Расклад «{context['spread']['title']}», карты:\n{layout}\n\n"
+        f"Уточняющий вопрос человека: {clar_question}\n"
+        "Ответь на это уточнение по этим картам."
+    )
+    return call_openrouter(_CLARIFY_SYSTEM, user, model=model, temperature=0.9,
+                           api_key=api_key, max_tokens=1000)
+
+
+# --------------------------------------------------------------------------- #
 #  Карта дня
 # --------------------------------------------------------------------------- #
 _DAILY_SYSTEM = (
-    "Ты — Шаманка, древняя мудрая ведунья у костра. Человеку выпала «карта дня». "
+    "Ты — Прорицательница, древняя мудрая ведунья у костра. Человеку выпала «карта дня». "
     "Дай короткое предсказание-настрой на СЕГОДНЯ по этой карте: 2–4 предложения, "
     "тёплым образным, но ЯСНЫМ голосом (стихии, огонь, нити, дым — в меру). Прямо "
     "скажи, на что настроиться, чего беречься или что впустить сегодня. Обращайся "
@@ -248,7 +342,7 @@ _DAILY_SYSTEM = (
 
 def daily_card(card: str, orient: str, *, name: str, gender: str,
                model: str | None = None, api_key: str | None = None) -> str:
-    """Короткое предсказание на день по одной карте, голосом Шаманки."""
+    """Короткое предсказание на день по одной карте, голосом Прорицательницы."""
     user = (f"Имя: {name}\nПол: {gender}\nКарта дня: {card} ({orient})\n"
             "Дай короткое предсказание-настрой на сегодня.")
     return call_openrouter(_DAILY_SYSTEM, user, model=model, temperature=0.9,
