@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -45,6 +46,30 @@ PROVIDER_TOKEN = os.getenv("YOOKASSA_PROVIDER_TOKEN", "").strip()
 # Пока ЮKassa не подключена (нет provider-token) — платим звёздами Telegram (XTR),
 # они работают без провайдера. Появится токен — автоматически перейдём на рубли/карту.
 USE_STARS = not PROVIDER_TOKEN
+
+# Чеки 54-ФЗ. Если в ЛК ЮKassa включена автоотправка чеков («Мой налог» у
+# самозанятого или онлайн-касса), инвойс ОБЯЗАН содержать email покупателя и
+# состав чека в provider_data — иначе платёж отклоняется. Включается флагом
+# YOOKASSA_SEND_RECEIPT=1 в .env. Суммы в чеке — в рублях (в prices — в копейках).
+SEND_RECEIPT = os.getenv("YOOKASSA_SEND_RECEIPT", "").strip().lower() in {"1", "true", "yes"}
+VAT_CODE = 1  # «без НДС» (самозанятый/УСН без НДС)
+
+
+def _provider_data(label: str, amount_kop: int) -> str:
+    """provider_data ЮKassa: чек с одной позицией на полную сумму."""
+    return json.dumps({
+        "receipt": {
+            "items": [{
+                "description": label,
+                "quantity": "1.00",
+                "amount": {
+                    "value": f"{amount_kop // 100}.{amount_kop % 100:02d}",
+                    "currency": "RUB",
+                },
+                "vat_code": VAT_CODE,
+            }],
+        },
+    }, ensure_ascii=False)
 
 # Пакеты для себя: код, число раскладов, цена в КОПЕЙКАХ (рубли) и в звёздах (≈ ₽/2).
 PACKAGES = [
@@ -85,10 +110,18 @@ async def _send_invoice(message: Message, *, title: str, description: str,
             prices=[LabeledPrice(label=label, amount=stars)],
         )
     else:
+        receipt_kwargs = {}
+        if SEND_RECEIPT:
+            receipt_kwargs = dict(
+                need_email=True,
+                send_email_to_provider=True,
+                provider_data=_provider_data(label, amount_kop),
+            )
         await message.answer_invoice(
             title=title, description=description, payload=payload,
             provider_token=PROVIDER_TOKEN, currency="RUB",
             prices=[LabeledPrice(label=label, amount=amount_kop)],
+            **receipt_kwargs,
         )
 
 
