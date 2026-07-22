@@ -72,10 +72,12 @@ def _provider_data(label: str, amount_kop: int) -> str:
     }, ensure_ascii=False)
 
 # Пакеты для себя: код, число раскладов, цена в КОПЕЙКАХ (рубли) и в звёздах (≈ ₽/2).
-# ВНИМАНИЕ: минимальная сумма платежа в рублях у Telegram — 87,73 ₽ (min_amount=8773
-# в currencies.json). Любой рублёвый пакет должен стоить ≥ 88 ₽, иначе инвойс
-# отклоняется с CURRENCY_TOTAL_AMOUNT_INVALID. Пакет «3 расклада» (49 ₽) убран.
+# ⚠️ При РУБЛЁВОМ провайдере минимум платежа у Telegram — 87,73 ₽ (min_amount=8773
+# в currencies.json): пакет «3 расклада» = 49 ₽ ниже минимума и даёт
+# CURRENCY_TOTAL_AMOUNT_INVALID, поэтому в рублях его надо скрыть или поднять цену.
+# В звёздах (25⭐) ограничения нет — на Stars пакет работает.
 PACKAGES = [
+    {"code": "p3", "readings": 3, "amount": 4900, "stars": 25, "title": "3 расклада"},
     {"code": "p10", "readings": 10, "amount": 9900, "stars": 50, "title": "10 раскладов"},
     {"code": "p100", "readings": 100, "amount": 29900, "stars": 150, "title": "100 раскладов"},
 ]

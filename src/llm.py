@@ -262,26 +262,52 @@ _CLARIFY_SYSTEM = (
 )
 
 
+def _looks_like_question(s: str) -> bool:
+    """Осмысленный вопрос, а не json-мусор («```json», «{», «questions» и т.п.)."""
+    s = s.strip()
+    if len(s) < 5 or len(s) > 120:
+        return False
+    if s.startswith("```") or s in {"{", "}", "[", "]"}:
+        return False
+    if s.lower().lstrip('"').startswith("questions"):
+        return False
+    return bool(re.search(r"[^\W\d_]", s, re.UNICODE))  # есть хотя бы одна буква
+
+
 def _parse_questions(raw: str) -> list[str]:
-    """Достать список вопросов из ответа модели (JSON или построчный fallback)."""
+    """Достать вопросы из ответа модели устойчиво к обёрткам и обрыву.
+
+    Gemini почти всегда оборачивает ответ в ```json ... ``` и иногда обрывает его
+    на max_tokens (тогда закрывающей `}` нет). Разбираем каскадом и отбраковываем
+    мусор: лучше показать 0 кнопок, чем «```json» и «{».
+    """
     raw = (raw or "").strip()
+    raw = re.sub(r"```[a-zA-Z]*", "", raw).replace("```", "")  # снимаем ограждение
+    candidates: list[str] = []
+    # 1) корректный JSON-объект целиком
     try:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
-        data = json.loads(m.group(0) if m else raw)
-        qs = data.get("questions") if isinstance(data, dict) else None
-        if isinstance(qs, list):
-            out = [str(q).strip().strip('"').strip() for q in qs if str(q).strip()]
-            if out:
-                return out[:N_CLARIFICATIONS]
-    except (ValueError, AttributeError):
-        pass
-    lines = []
-    for ln in raw.splitlines():
-        ln = ln.strip().lstrip("-•*").lstrip("0123456789").lstrip(".) ").strip()
-        ln = ln.strip('"').strip()
-        if ln:
-            lines.append(ln)
-    return lines[:N_CLARIFICATIONS]
+        if m:
+            qs = json.loads(m.group(0)).get("questions")
+            if isinstance(qs, list):
+                candidates = [str(q) for q in qs]
+    except (ValueError, AttributeError, TypeError):
+        candidates = []
+    # 2) обрезанный JSON — вытаскиваем строковые значения в кавычках
+    if not candidates:
+        candidates = re.findall(r'"([^"\n]{5,}?)"', raw)
+    # 3) совсем fallback — построчно
+    if not candidates:
+        candidates = raw.splitlines()
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in candidates:
+        c = c.strip().strip(",").strip()
+        c = c.lstrip("-•*").lstrip("0123456789").lstrip(".) ").strip().strip('"').strip()
+        if _looks_like_question(c) and c.lower() not in seen:
+            seen.add(c.lower())
+            out.append(c)
+    return out[:N_CLARIFICATIONS]
 
 
 def suggest_clarifications(context: dict, *, model: str | None = None,
@@ -301,7 +327,7 @@ def suggest_clarifications(context: dict, *, model: str | None = None,
         user += f"\nКоротко из трактовки:\n{interp[:800]}\n"
     user += f"\nДай {N_CLARIFICATIONS} уточняющих вопроса."
     raw = call_openrouter(_SUGGEST_SYSTEM, user, model=model or CLARIFY_SUGGEST_MODEL,
-                          temperature=0.8, api_key=api_key, max_tokens=200)
+                          temperature=0.8, api_key=api_key, max_tokens=400)
     return _parse_questions(raw)
 
 
